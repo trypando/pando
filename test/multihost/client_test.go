@@ -425,23 +425,32 @@ func (c *client) capacity(t *testing.T) capacity {
 // app is removed can still count it.
 const committedTTL = 10 * time.Second
 
-// settledCapacity is GET /capacity as read after everything before this call:
-// a snapshot taken at least a committed-reading lifetime later, with a little
-// more for the clocks of this machine and Pando's to differ. GET /capacity
-// answers from a snapshot up to capacity.DefaultInterval old, and placement
-// reads the hosts live, so predicting where an app goes from the snapshot at
-// hand put it on the other host (issue #348).
+// settledCapacity is GET /capacity as read after everything before this call.
+// GET /capacity answers from a snapshot up to capacity.DefaultInterval old,
+// and placement reads the hosts live, so predicting where an app goes from
+// the snapshot at hand put it on the other host (issue #348).
+//
+// A snapshot's as_of is when its reads finished, not when they began, so one
+// stamped after the threshold may have read the hosts before it. Snapshots
+// are read one at a time (capacity.Snapshots.refresh), so the one after it
+// began reading after the threshold. The threshold is a committed-reading
+// lifetime away, with a little more for the clocks of this machine and
+// Pando's to differ.
 func (c *client) settledCapacity(t *testing.T) capacity {
 	t.Helper()
 	after := time.Now().Add(committedTTL + 2*time.Second)
-	deadline := time.Now().Add(2 * time.Minute)
+	deadline := time.Now().Add(3 * time.Minute)
+	var past time.Time
 	for {
 		reading := c.capacity(t)
-		if reading.AsOf.After(after) {
+		switch {
+		case past.IsZero() && reading.AsOf.After(after):
+			past = reading.AsOf
+		case !past.IsZero() && reading.AsOf.After(past):
 			return reading
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("GET /capacity was not read again after %s: as_of %s", after, reading.AsOf)
+			t.Fatalf("GET /capacity was not read twice after %s: as_of %s", after, reading.AsOf)
 		}
 		time.Sleep(2 * time.Second)
 	}

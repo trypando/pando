@@ -908,9 +908,11 @@ checked against other apps', so a spec naming another app's port was pinned too 
 answered that port with whichever app the database returned. `state.Apps.Pin` now makes the named
 port the app's allocation in the pin's transaction, releasing the app's previous port on that
 adapter, and refuses with `STATE_ADDRESS_TAKEN` a port another live app holds or is reached at, on
-any adapter, since the proxy listens and resolves by number alone. A port outside the install's range
-is refused, as nothing publishes it, unless the app already holds it. `Ports.Allocate` skips any port
-a live app is reached at, so an app pinned before this keeps its port.
+any adapter, since the proxy listens and resolves by number alone. That is a unique index on
+`port_allocations.port` (migration 97) as well as a check, so two pins racing for one port on two
+adapters cannot both commit. A port outside the install's range is refused, as nothing publishes it,
+unless the app already holds it or is already reached at it. `Ports.Allocate` skips any port a live
+app is reached at, so an app pinned before this keeps its port.
 
 **[P] In a containerized install the published range and the allocation range are the same range.**
 `docker-compose.yml` sets both from one pair of variables, defaulting to `9000-9019` rather than the

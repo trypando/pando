@@ -1036,23 +1036,29 @@ func (a *Apps) Pin(ctx context.Context, appID, specID, newState, pinnedBy string
 // pinned with no allocation behind it, and nothing listened on it: the app
 // was given an address that closed the connection (issue #348). Claiming it
 // here makes the spec the record of where the app is reached (R-020), and the
-// allocation's primary key makes a second holder impossible.
+// unique index on the allocation's port makes a second holder impossible, on
+// any adapter (migration 97).
 //
 // The app's port on another number, on the same adapter, is released: an app
 // has one port per adapter, and pinning a spec that moves it is the move.
 func (a *Apps) claimPort(ctx context.Context, tx pgx.Tx, adapterRef, appID string, port int) error {
-	var held bool
+	// held: the allocation is already this app's. reached: the app is already
+	// reached at the port, perhaps pinned before pins claimed their port and
+	// so with no allocation behind it.
+	var held, reached bool
 	if err := tx.QueryRow(ctx, `
-		SELECT EXISTS (SELECT 1 FROM port_allocations WHERE adapter_ref = $1 AND app_id = $2 AND port = $3)`,
-		adapterRef, appID, port).Scan(&held); err != nil {
+		SELECT EXISTS (SELECT 1 FROM port_allocations WHERE adapter_ref = $1 AND app_id = $2 AND port = $3),
+		       EXISTS (SELECT 1 FROM apps WHERE id = $2 AND address_port = $3)`,
+		adapterRef, appID, port).Scan(&held, &reached); err != nil {
 		return errs.Wrap(errs.Internal, "Could not read this app's port.", err)
 	}
 	if held {
-		// Already this app's, so a range narrowed since does not take it away.
 		return nil
 	}
 
-	if a.PortRangeStart > 0 && (port < a.PortRangeStart || port > a.PortRangeEnd) {
+	// A port the app already has is not taken away by a range narrowed since,
+	// whether or not an allocation records it.
+	if !reached && a.PortRangeStart > 0 && (port < a.PortRangeStart || port > a.PortRangeEnd) {
 		return errs.Newf(errs.ValidInvalid,
 			"Port %d is outside the ports this installation gives to apps, %d to %d, so nothing would reach the app there.",
 			port, a.PortRangeStart, a.PortRangeEnd).

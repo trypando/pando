@@ -81,9 +81,10 @@ func (p *Ports) Allocate(ctx context.Context, adapterRef, appID string, from, to
 		// correctly.
 		//
 		// Free means free on every adapter, and not the port of any live app:
-		// the proxy listens and resolves by number alone, and an app pinned
-		// before pins claimed their port holds one with no allocation behind
-		// it (issue #348).
+		// the proxy listens and resolves by number alone, so a port is one
+		// app's on every adapter (migration 97), and an app pinned before pins
+		// claimed their port holds one with no allocation behind it (issue
+		// #348).
 		var port int
 		err := p.db.QueryRow(ctx, `
 			INSERT INTO port_allocations (adapter_ref, port, app_id)
@@ -98,7 +99,7 @@ func (p *Ports) Allocate(ctx context.Context, adapterRef, appID string, from, to
 			)
 			ORDER BY candidate
 			LIMIT 1
-			ON CONFLICT (adapter_ref, port) DO NOTHING
+			ON CONFLICT (port) DO NOTHING
 			RETURNING port
 		`, adapterRef, appID, from, to).Scan(&port)
 

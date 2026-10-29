@@ -166,7 +166,7 @@ func TestR023_AnAppOnAnotherHostIsReachedOnlyThroughTheProxy(t *testing.T) {
 // may change its own routes and reaches nothing but that network.
 func probe(script string) (string, error) {
 	return docker("run", "--rm", "--name", "mh-test-probe-"+stamp(), "--label", "mh-test=1",
-		"--network", netName, "--reading-add", "NET_ADMIN", "busybox:1.37", "sh", "-c", script)
+		"--network", netName, "--cap-add", "NET_ADMIN", "busybox:1.37", "sh", "-c", script)
 }
 
 func containerIP(t *testing.T, host, name string) string {
