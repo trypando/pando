@@ -4,6 +4,7 @@ package state_test
 
 import (
 	"context"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -142,4 +143,50 @@ func TestR166_AnAppKeepsAPortItWasPinnedToBeforePinsClaimedPorts(t *testing.T) {
 	require.NoError(t, err)
 	refused := pinRouting(t, apps, other.ID, alice.ID, spec.Routing{AdapterRef: "rte_loopback", Mode: spec.RoutingPort, Port: 41501})
 	require.Equal(t, errs.ValidInvalid, errs.CodeOf(refused), "another app is held to the range: %v", refused)
+}
+
+// TestR165_APortReachesOnlyTheAppHoldingIt asserts R-165 for an install that
+// already has two apps at one port when it upgrades: one that a spec naming
+// another app's port was pinned to before pins checked ports, or one that
+// lost a duplicate in migration 97. The port reaches the app holding its
+// allocation, every time, and not the other; when the holder moves, the other
+// is not served there until it pins the port and so claims it.
+func TestR165_APortReachesOnlyTheAppHoldingIt(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	db := connected(t)
+	alice := seedUser(t, db, "alice")
+	apps := state.NewApps(db)
+	port := testPort()
+	at := spec.Routing{AdapterRef: "rte_loopback", Mode: spec.RoutingPort, Port: port}
+
+	holder, err := apps.Create(ctx, "holder", "holder-port", alice.ID, alice.ID, spec.Source{Type: spec.SourceGit, URL: "https://example.test/h"})
+	require.NoError(t, err)
+	require.NoError(t, pinRouting(t, apps, holder.ID, alice.ID, at))
+	other, err := apps.Create(ctx, "other", "other-port", alice.ID, alice.ID, spec.Source{Type: spec.SourceGit, URL: "https://example.test/o"})
+	require.NoError(t, err)
+	require.NoError(t, pinRouting(t, apps, other.ID, alice.ID, spec.Routing{AdapterRef: "rte_loopback", Mode: spec.RoutingPort, Port: testPort()}))
+	// As such an install has it: the other app is at the port, with nothing allocated.
+	_, err = db.Exec(ctx, `DELETE FROM port_allocations WHERE app_id = $1`, other.ID)
+	require.NoError(t, err)
+	_, err = db.Exec(ctx, `UPDATE apps SET address_port = $2 WHERE id = $1`, other.ID, port)
+	require.NoError(t, err)
+
+	for range 5 {
+		app, _, found, err := apps.ByRouting(ctx, "port", strconv.Itoa(port))
+		require.NoError(t, err)
+		require.True(t, found)
+		require.Equal(t, holder.ID, app.ID, "the port reaches the app holding it")
+	}
+
+	require.NoError(t, pinRouting(t, apps, holder.ID, alice.ID, spec.Routing{AdapterRef: "rte_loopback", Mode: spec.RoutingPort, Port: testPort()}))
+	_, _, found, err := apps.ByRouting(ctx, "port", strconv.Itoa(port))
+	require.NoError(t, err)
+	require.False(t, found, "an app holding no allocation is not served at the port")
+
+	require.NoError(t, pinRouting(t, apps, other.ID, alice.ID, at), "the port is free, so its pin claims it")
+	app, _, found, err := apps.ByRouting(ctx, "port", strconv.Itoa(port))
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, other.ID, app.ID)
 }

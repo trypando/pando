@@ -1603,7 +1603,16 @@ func (a *Apps) ByRouting(ctx context.Context, by, value string) (App, *spec.AppS
 		if convErr != nil { //nolint:nilerr // no app has this address; not a failure
 			return App{}, nil, false, nil
 		}
-		where = `a.address_port = $1`
+		// And the app holds the port's allocation, which one app at most
+		// does (migration 97). address_port alone is not unique: an app
+		// pinned before pins claimed their port, or one that lost a
+		// duplicate in migration 97, can still name a port another app holds,
+		// and a request on it reached whichever of them the database returned
+		// (issue #348). Such an app was never listened for either
+		// (proxy.PortListeners opens allocated ports); its next pin claims
+		// the port or is told it is taken.
+		where = `a.address_port = $1 AND EXISTS (
+			SELECT 1 FROM port_allocations pa WHERE pa.app_id = a.id AND pa.port = $1)`
 		arg = port
 	default:
 		return App{}, nil, false, errs.Newf(errs.Internal, "Unknown routing lookup %q.", by)

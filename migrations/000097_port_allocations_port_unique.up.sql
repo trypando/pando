@@ -12,9 +12,11 @@ DELETE FROM port_allocations
  WHERE app_id IN (SELECT id FROM apps WHERE deleted_at IS NOT NULL);
 
 -- A port two adapters still hold stays with the app that was given it first.
--- The other loses only the allocation: it is still pinned to the port, which
--- Ports.Allocate and state.Apps.Pin refuse to hand anyone else, and its next
--- pin of it is refused as taken.
+-- The other loses the allocation and keeps its pinned spec, which is
+-- append-only (R-152): the proxy resolves a port only to the app holding its
+-- allocation (state.Apps.ByRouting), as it only ever listened for one, so the
+-- other is not served there. Its next pin claims the port if it is free, or
+-- is told it is taken.
 DELETE FROM port_allocations later
  USING port_allocations earlier
  WHERE later.port = earlier.port
