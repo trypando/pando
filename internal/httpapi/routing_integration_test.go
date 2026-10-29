@@ -48,6 +48,7 @@ func withRouting(t *testing.T) (*install, *session, *session, string) {
 	require.NoError(t, reg.SetDefault(adapterapi.CategoryRouting, "rte_cf"))
 	i.Server.Address = &address.Service{Registry: reg, Ports: state.NewPorts(i.db), Taken: i.Apps,
 		PortRangeStart: 9000, PortRangeEnd: 9019, BaseDomain: "apps.test"}
+	i.Apps.PortRangeStart, i.Apps.PortRangeEnd = 9000, 9019
 
 	admin := i.admin()
 	appID := i.appWithSpec(admin, "notes")

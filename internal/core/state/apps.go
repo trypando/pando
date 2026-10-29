@@ -170,6 +170,11 @@ type Apps struct {
 	// An app given one would receive the console's traffic on the console's
 	// origin (2026-10-16 assessment, finding 2). Nil reserves none.
 	ReservedHostnames func(ctx context.Context) []string
+
+	// PortRangeStart and PortRangeEnd are the install's port range, which a
+	// port a spec names must be in to be claimed when it is pinned: outside
+	// it, nothing publishes the port (design 03 §4.2). Zero checks no range.
+	PortRangeStart, PortRangeEnd int
 }
 
 func NewApps(db *DB) *Apps { return &Apps{db: db} }
@@ -991,6 +996,11 @@ func (a *Apps) Pin(ctx context.Context, appID, specID, newState, pinnedBy string
 	}
 	hostname, path := addressOf(pinned.Routing)
 	port := portOf(pinned.Routing)
+	if port != 0 {
+		if err := a.claimPort(ctx, tx, pinned.Routing.AdapterRef, appID, port); err != nil {
+			return err
+		}
+	}
 
 	if _, err := tx.Exec(ctx,
 		`INSERT INTO spec_pins (app_id, spec_id, pinned_by) VALUES ($1, $2, $3)`,
@@ -1015,6 +1025,64 @@ func (a *Apps) Pin(ctx context.Context, appID, specID, newState, pinnedBy string
 
 	if err := tx.Commit(ctx); err != nil {
 		return errs.Wrap(errs.Internal, "Could not pin the spec.", err)
+	}
+	return nil
+}
+
+// claimPort makes the port a pinned spec names this app's allocation, so the
+// proxy listens on it (design 03 §4.2, R-166).
+//
+// A port named in a spec rather than allocated through PUT /routing was
+// pinned with no allocation behind it, and nothing listened on it: the app
+// was given an address that closed the connection (issue #348). Claiming it
+// here makes the spec the record of where the app is reached (R-020), and the
+// allocation's primary key makes a second holder impossible.
+//
+// The app's port on another number, on the same adapter, is released: an app
+// has one port per adapter, and pinning a spec that moves it is the move.
+func (a *Apps) claimPort(ctx context.Context, tx pgx.Tx, adapterRef, appID string, port int) error {
+	// A deleted app's hold on the port lapses, as it does in Ports.Allocate.
+	if _, err := tx.Exec(ctx, `
+		DELETE FROM port_allocations
+		WHERE port = $1 AND app_id IN (SELECT id FROM apps WHERE deleted_at IS NOT NULL)`, port); err != nil {
+		return errs.Wrap(errs.Internal, "Could not release the ports of deleted apps.", err)
+	}
+
+	var held bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS (SELECT 1 FROM port_allocations WHERE adapter_ref = $1 AND app_id = $2 AND port = $3)`,
+		adapterRef, appID, port).Scan(&held); err != nil {
+		return errs.Wrap(errs.Internal, "Could not read this app's port.", err)
+	}
+	if held {
+		// Already this app's, so a range narrowed since does not take it away.
+		return nil
+	}
+
+	if a.PortRangeStart > 0 && (port < a.PortRangeStart || port > a.PortRangeEnd) {
+		return errs.Newf(errs.ValidInvalid,
+			"Port %d is outside the ports this installation gives to apps, %d to %d, so nothing would reach the app there.",
+			port, a.PortRangeStart, a.PortRangeEnd).
+			WithDetail("port", port).
+			WithDetail("range_start", a.PortRangeStart).
+			WithDetail("range_end", a.PortRangeEnd).
+			WithRemedy(fmt.Sprintf("Choose a port from %d to %d, or leave routing.port out and set the address with PUT /apps/{id}/routing, which picks a free one.",
+				a.PortRangeStart, a.PortRangeEnd))
+	}
+
+	if _, err := tx.Exec(ctx,
+		`DELETE FROM port_allocations WHERE adapter_ref = $1 AND app_id = $2`, adapterRef, appID); err != nil {
+		return errs.Wrap(errs.Internal, "Could not release this app's previous port.", err)
+	}
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO port_allocations (adapter_ref, port, app_id) VALUES ($1, $2, $3)`,
+		adapterRef, port, appID); err != nil {
+		if isUniqueViolation(err) {
+			// Taken past checkPort, by a pin that committed first.
+			return errs.Newf(errs.StateAddressTaken, "Another app took port %d a moment ago.", port).
+				WithRemedy("Choose another port for this app.")
+		}
+		return errs.Wrap(errs.Internal, "Could not assign this port to the app.", err)
 	}
 	return nil
 }

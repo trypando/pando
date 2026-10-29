@@ -121,7 +121,7 @@ func autoApp(t *testing.T, apps *state.Apps, owner string, ad spec.AutoDeploy) s
 		Source:        src,
 		Build:         spec.Build{Strategy: spec.BuildPrebuilt},
 		Workloads:     []spec.Workload{{Name: "web", Image: "example/app:1", Primary: true, Exposed: true}},
-		Routing:       spec.Routing{AdapterRef: "rte_fake", Mode: spec.RoutingPort, Port: 9000},
+		Routing:       spec.Routing{AdapterRef: "rte_fake", Mode: spec.RoutingPort, Port: testPort()},
 		Runtime:       spec.RuntimeRef{AdapterRef: "rt_fake", IsolationFloor: spec.IsolationContainer},
 		Deploy:        spec.Deploy{Strategy: spec.DeployRecreate, AutoDeploy: ad},
 	}, spec.OriginEdited, owner)

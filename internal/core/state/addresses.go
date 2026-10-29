@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -22,7 +23,7 @@ type querier interface {
 }
 
 // addressOf is the hostname and path a routing block claims. At most one is
-// set; a port-mode app claims neither (its port is port_allocations').
+// set; a port-mode app claims neither (its port is portOf's).
 func addressOf(r spec.Routing) (hostname, path string) {
 	switch r.Mode {
 	case spec.RoutingSubdomain:
@@ -70,6 +71,31 @@ func checkAddress(ctx context.Context, q querier, reserved []string, appID strin
 	}
 	if path != "" {
 		return checkPath(ctx, q, appID, path)
+	}
+	if port := portOf(r); port != 0 {
+		return checkPort(ctx, q, appID, port)
+	}
+	return nil
+}
+
+// checkPort refuses a port another live app is reached at or holds (R-165).
+//
+// Any adapter's hold counts, though allocations are kept per adapter: the
+// proxy listens on a port number, and resolves a request on it by number
+// alone. A spec that named another app's port was pinned, and that port then
+// reached whichever of the two apps the database returned (issue #348).
+func checkPort(ctx context.Context, q querier, appID string, port int) error {
+	var other string
+	err := q.QueryRow(ctx, `
+		SELECT name FROM apps
+		WHERE deleted_at IS NULL AND id <> $1
+		  AND (address_port = $2 OR id IN (SELECT app_id FROM port_allocations WHERE port = $2))
+		LIMIT 1`, appID, port).Scan(&other)
+	if err == nil {
+		return taken(fmt.Sprintf("Port %d", port), other, "is reached at it")
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return errs.Wrap(errs.Internal, "Could not check whether another app holds this port.", err)
 	}
 	return nil
 }

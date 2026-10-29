@@ -210,7 +210,7 @@ func newHarness(t *testing.T, appState string) *harness {
 		Workloads: []spec.Workload{{
 			Name: "web", Image: "example/app:1", Primary: true, Exposed: true,
 		}},
-		Routing: spec.Routing{AdapterRef: "rte_fake", Mode: spec.RoutingPort, Port: 9000},
+		Routing: spec.Routing{AdapterRef: "rte_fake", Mode: spec.RoutingPort, Port: testPort()},
 		Runtime: spec.RuntimeRef{AdapterRef: "rt_fake", IsolationFloor: spec.IsolationContainer},
 		Deploy:  spec.Deploy{Strategy: spec.DeployRecreate},
 	}
@@ -821,7 +821,7 @@ func TestR203_TheReconcilerRecordsStorageTheRuntimeHolds(t *testing.T) {
 		Workloads: []spec.Workload{{Name: "web", Image: "example/app:1", Primary: true, Exposed: true,
 			Mounts: []spec.Mount{{VolumeID: "data", Path: "/data"}}}},
 		Volumes: []spec.Volume{{ID: "data", Name: "data"}},
-		Routing: spec.Routing{AdapterRef: "rte_fake", Mode: spec.RoutingPort, Port: 9000},
+		Routing: spec.Routing{AdapterRef: "rte_fake", Mode: spec.RoutingPort, Port: testPort()},
 		Runtime: spec.RuntimeRef{AdapterRef: "rt_fake", IsolationFloor: spec.IsolationContainer},
 		Deploy:  spec.Deploy{Strategy: spec.DeployRecreate},
 	}

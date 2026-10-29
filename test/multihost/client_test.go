@@ -210,10 +210,15 @@ func init() { nextPort.Store(9100) }
 
 // echoSpec is the echo image on the docker-hosts runtime, limited to
 // memory bytes (0: the install default).
+//
+// The limit is the app's as well as the workload's: a workload never runs
+// above its app's limit (spec.LimitWithin, R-240), and the app's would
+// otherwise be the install default the suite sets, 128 MiB (issue #348).
 func echoSpec(port int, memory int64, env string) string {
-	resources := ""
+	resources, appResources := "", ""
 	if memory > 0 {
 		resources = fmt.Sprintf(`,"resources": {"cpu_millis": 100, "memory_bytes": %d}`, memory)
+		appResources = fmt.Sprintf(`"resources": {"cpu_millis": 100, "memory_bytes": %d, "overridden": true},`, memory)
 	}
 	envs := `{"key": "HTTP_PORT", "value": "8080"}`
 	if env != "" {
@@ -228,8 +233,9 @@ func echoSpec(port int, memory int64, env string) string {
 			"ports": [{"number": 8080, "protocol": "http", "source": "user"}]%s}],
 		"routing": {"adapter_ref": "rte_loopback", "mode": "port", "port": %d},
 		"runtime": {"adapter_ref": "rt_hosts", "isolation_floor": 10},
+		%s
 		"deploy": {"strategy": "recreate"}
-	}`, echoRemote, envs, resources, port)
+	}`, echoRemote, envs, resources, port, appResources)
 }
 
 // createApp makes an app, deleted when the test ends, and waits for its
@@ -350,6 +356,12 @@ func requireOn(t *testing.T, app, want string) {
 	t.Helper()
 	got, err := hostOf(app)
 	require.NoError(t, err)
+	if got != want {
+		for name, c := range map[string]string{"host-a": cHostA, "host-b": cHostB} {
+			out, _ := inner(c, "ps", "-a", "--format", `{{.Names}} {{.Status}} mem={{.Label "io.pando.limit.memory"}}`)
+			t.Logf("%s containers:\n%s", name, out)
+		}
+	}
 	require.Equal(t, want, got, "app %s placement", app)
 }
 
@@ -370,6 +382,10 @@ type capacity struct {
 	TotalCPU int64 `json:"total_cpu_millis"`
 	TotalMem int64 `json:"total_memory_bytes"`
 	Hosts    map[string]hostRow
+
+	// AsOf is when the runtimes were read: GET /capacity answers from a
+	// snapshot taken in the background (capacity.Snapshots).
+	AsOf time.Time
 }
 
 func (c *client) capacity(t *testing.T) capacity {
@@ -386,6 +402,7 @@ func (c *client) capacity(t *testing.T) capacity {
 				Hosts []hostRow `json:"hosts"`
 			} `json:"details"`
 		} `json:"runtimes"`
+		AsOf time.Time `json:"as_of"`
 	}
 	require.NoError(t, json.Unmarshal([]byte(out), &body), out)
 	for _, r := range body.Runtimes {
@@ -393,7 +410,7 @@ func (c *client) capacity(t *testing.T) capacity {
 			continue
 		}
 		require.Equal(t, "ok", r.Status, out)
-		cap := capacity{TotalCPU: r.TotalCPU, TotalMem: r.TotalMem, Hosts: map[string]hostRow{}}
+		cap := capacity{TotalCPU: r.TotalCPU, TotalMem: r.TotalMem, Hosts: map[string]hostRow{}, AsOf: body.AsOf}
 		for _, h := range r.Details.Hosts {
 			cap.Hosts[h.Name] = h
 		}
@@ -401,6 +418,33 @@ func (c *client) capacity(t *testing.T) capacity {
 	}
 	t.Fatalf("no rt_hosts in GET /capacity: %s", out)
 	return capacity{}
+}
+
+// committedTTL is how long each replica keeps a host's reading of what its
+// apps are limited to (docker.committedTTL): a snapshot taken sooner after an
+// app is removed can still count it.
+const committedTTL = 10 * time.Second
+
+// settledCapacity is GET /capacity as read after everything before this call:
+// a snapshot taken at least a committed-reading lifetime later, with a little
+// more for the clocks of this machine and Pando's to differ. GET /capacity
+// answers from a snapshot up to capacity.DefaultInterval old, and placement
+// reads the hosts live, so predicting where an app goes from the snapshot at
+// hand put it on the other host (issue #348).
+func (c *client) settledCapacity(t *testing.T) capacity {
+	t.Helper()
+	after := time.Now().Add(committedTTL + 2*time.Second)
+	deadline := time.Now().Add(2 * time.Minute)
+	for {
+		cap := c.capacity(t)
+		if cap.AsOf.After(after) {
+			return cap
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("GET /capacity was not read again after %s: as_of %s", after, cap.AsOf)
+		}
+		time.Sleep(2 * time.Second)
+	}
 }
 
 // roomiest is the app host placement should choose for a new app: the most
@@ -419,7 +463,8 @@ func (c *client) steerTo(t *testing.T, want string) {
 	t.Helper()
 	other := map[string]string{"host-a": "host-b", "host-b": "host-a"}[want]
 	for range 3 {
-		cap := c.capacity(t)
+		cap := c.settledCapacity(t)
+		t.Logf("steering to %s: %s free %d, %s free %d", want, want, cap.Hosts[want].FreeMem, other, cap.Hosts[other].FreeMem)
 		if cap.Hosts[want].FreeMem > cap.Hosts[other].FreeMem {
 			return
 		}
@@ -466,7 +511,10 @@ func (c *client) appAt(t *testing.T, app, via string) string {
 }
 
 // throughProxy requests path on the app at, from Pando's proxy, signed in,
-// with extra headers and cookies.
+// with extra headers and cookies. A request that gets no answer is status 0
+// with the error as its body: the proxy opens an app's port at its next sync
+// after the pin (proxy.PortListeners), and until then the connection closes,
+// which an eventually around this waits out.
 func (c *client) throughProxy(t *testing.T, at, path string, headers map[string]string, cookies ...*http.Cookie) (int, string) {
 	t.Helper()
 	req, err := http.NewRequest(http.MethodGet, at+path, nil)
@@ -481,7 +529,9 @@ func (c *client) throughProxy(t *testing.T, at, path string, headers map[string]
 	hc := &http.Client{Timeout: 30 * time.Second,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	resp, err := hc.Do(req)
-	require.NoError(t, err)
+	if err != nil {
+		return 0, err.Error()
+	}
 	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(resp.Body)
 	return resp.StatusCode, string(body)

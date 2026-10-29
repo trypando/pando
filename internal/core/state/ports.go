@@ -79,14 +79,22 @@ func (p *Ports) Allocate(ctx context.Context, adapterRef, appID string, from, to
 		// still pick the same port, and then exactly one INSERT survives — the
 		// other returns no rows and tries again against a range it now sees
 		// correctly.
+		//
+		// Free means free on every adapter, and not the port of any live app:
+		// the proxy listens and resolves by number alone, and an app pinned
+		// before pins claimed their port holds one with no allocation behind
+		// it (issue #348).
 		var port int
 		err := p.db.QueryRow(ctx, `
 			INSERT INTO port_allocations (adapter_ref, port, app_id)
 			SELECT $1, candidate, $2
 			FROM generate_series($3::int, $4::int) AS candidate
 			WHERE NOT EXISTS (
-				SELECT 1 FROM port_allocations existing
-				WHERE existing.adapter_ref = $1 AND existing.port = candidate
+				SELECT 1 FROM port_allocations existing WHERE existing.port = candidate
+			)
+			AND NOT EXISTS (
+				SELECT 1 FROM apps
+				WHERE apps.deleted_at IS NULL AND apps.id <> $2 AND apps.address_port = candidate
 			)
 			ORDER BY candidate
 			LIMIT 1

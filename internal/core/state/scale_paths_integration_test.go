@@ -30,7 +30,7 @@ func specFor(appID string, image int, autoDeploy bool) *spec.AppSpec {
 		Source:        spec.Source{Type: spec.SourceGit, URL: "https://example.test/app", Ref: "main"},
 		Build:         spec.Build{Strategy: spec.BuildPrebuilt},
 		Workloads:     []spec.Workload{{Name: "web", Image: fmt.Sprintf("example/app:%d", image), Primary: true, Exposed: true}},
-		Routing:       spec.Routing{AdapterRef: "rte_fake", Mode: spec.RoutingPort, Port: 9000},
+		Routing:       spec.Routing{AdapterRef: "rte_fake", Mode: spec.RoutingPort, Port: testPort()},
 		Runtime:       spec.RuntimeRef{AdapterRef: "rt_fake", IsolationFloor: spec.IsolationContainer},
 		Deploy:        spec.Deploy{Strategy: spec.DeployRecreate, AutoDeploy: spec.AutoDeploy{Enabled: autoDeploy}},
 		Retention:     spec.Retention{SpecRevisions: 10},
