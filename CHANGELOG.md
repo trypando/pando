@@ -19,12 +19,24 @@ Unreleased above it. -->
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-10-29
+
 ### Security
 
 No new advisories.
 
 ### Added
 
+- **Pando cluster** (R-414 – R-422). A new Pando joins an installation at setup with a join token
+  from **Hosts** or `pando cluster tokens create`, as a control host, an app host or both. Apps keep
+  a warm standby on another app host, started when a majority of hosts agree their host is lost;
+  with fewer than three hosts, a person marks the host lost. Joined hosts talk over mutual TLS on
+  one port (`:7444`) and never expose their container runtime. A second host needs backups sent off
+  the host, audit archives exported and an image registry configured, and a new S3-compatible backup
+  destination covers AWS S3, R2, B2 and MinIO. A single-host installation is unchanged. Design:
+  `docs/design/notes-cluster.md`.
+- **Releases carry a Kubernetes manifest.** `pando-kubernetes.yaml` on each release is every file in
+  `deploy/kubernetes`, with Pando and its egress gateway pinned to that release's image digest.
 - **Sign-in goes straight to the identity provider when it is the only way in.** With password
   sign-in off and one provider turned on, the sign-in page starts that provider without a click. An
   app on its own hostname needs its own sign-in, and this makes it a round of redirects when the
@@ -47,6 +59,21 @@ No new advisories.
   `pg_dump` or `mysqldump` and loaded back the same way; restoring one needs the app running. Other
   volumes are still copied while the app runs: the backup's manifest marks each such copy `live`,
   and the app shows a notice naming them. Backups of the whole installation are unchanged.
+- **A Node server with a page in `public/` deploys as a server** (#349). A `package.json` with a
+  start script, or a `main` naming a file, now means `public/index.html` is the server's asset, so
+  detection no longer proposes a static site that drops the app's API. Fixed by
+  [@XRafik](https://github.com/XRafik) in [#351](https://github.com/trypando/pando/pull/351).
+- **A port named in a spec is served, and belongs to one app** (#348). A `routing.port` typed into a
+  spec was pinned but never listened on, and could name a port another app already held, after
+  which the proxy answered that port with either app. Pinning now claims the port: a port another
+  app holds, or one outside the installation's range, is refused with `STATE_ADDRESS_TAKEN`.
+- **The detection diff shows only what accepting changes** (#350). It listed variables, slot fills,
+  volumes, routing, egress and limits a person had set as changing, though accepting keeps them.
+
+### Upgrade notes
+
+- Two apps that already share a port keep sharing it until one of them is deployed again. Give one
+  of them another port if both should stay reachable.
 
 ## [0.16.0] - 2026-10-25
 
@@ -1542,7 +1569,8 @@ review the proposal as usual.
 The first release. Its notes were generated from the commit log, which is what this file now exists
 to replace; see the release page for the artifact list.
 
-[Unreleased]: https://github.com/trypando/pando/compare/v0.16.0...main
+[Unreleased]: https://github.com/trypando/pando/compare/v0.17.0...main
+[0.17.0]: https://github.com/trypando/pando/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/trypando/pando/compare/v0.15.1...v0.16.0
 [0.15.1]: https://github.com/trypando/pando/compare/v0.15.0...v0.15.1
 [0.15.0]: https://github.com/trypando/pando/compare/v0.14.0...v0.15.0
