@@ -6,6 +6,7 @@ import (
 	"context"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -66,6 +67,51 @@ func TestR165_OnePortGoesToOneAppHoweverPinsRace(t *testing.T) {
 		require.Equal(t, errs.StateAddressTaken, errs.CodeOf(err), "a losing pin is told the port was taken: %v", err)
 	}
 	require.Equal(t, 1, won, "exactly one app has the port")
+}
+
+// TestR165_APinThatLosesTheRaceForAPortIsToldItWasTaken asserts the race
+// above one step at a time: another app's claim on the port is written but
+// not committed, so the pin's check passes; the pin waits on the claim's row;
+// and when the claim commits, the pin is told the port was taken on another
+// adapter, rather than given it or failing with an internal error.
+func TestR165_APinThatLosesTheRaceForAPortIsToldItWasTaken(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	db := connected(t)
+	alice := seedUser(t, db, "alice")
+	apps := state.NewApps(db)
+	port := testPort()
+
+	first, err := apps.Create(ctx, "first", "first-race", alice.ID, alice.ID, spec.Source{Type: spec.SourceGit, URL: "https://example.test/f"})
+	require.NoError(t, err)
+	second, err := apps.Create(ctx, "second", "second-race", alice.ID, alice.ID, spec.Source{Type: spec.SourceGit, URL: "https://example.test/s"})
+	require.NoError(t, err)
+	s := minimalSpec()
+	s.AppID = second.ID
+	s.Routing = spec.Routing{AdapterRef: "rte_loopback", Mode: spec.RoutingPort, Port: port}
+	rev, err := apps.CreateRevision(ctx, second.ID, s, spec.OriginEdited, alice.ID)
+	require.NoError(t, err)
+
+	claim, err := db.Begin(ctx)
+	require.NoError(t, err)
+	defer func() { _ = claim.Rollback(ctx) }()
+	_, err = claim.Exec(ctx, `INSERT INTO port_allocations (adapter_ref, port, app_id) VALUES ('rte_traefik', $1, $2)`, port, first.ID)
+	require.NoError(t, err)
+
+	pinned := make(chan error, 1)
+	go func() { pinned <- apps.Pin(ctx, second.ID, rev.ID, state.StateProposed, alice.ID) }()
+	require.Eventually(t, func() bool {
+		var waiting int
+		_ = db.QueryRow(ctx, `
+			SELECT count(*) FROM pg_stat_activity
+			WHERE datname = current_database() AND wait_event_type = 'Lock'`).Scan(&waiting)
+		return waiting > 0
+	}, 10*time.Second, 50*time.Millisecond, "the pin waits on the uncommitted claim")
+	require.NoError(t, claim.Commit(ctx))
+
+	err = <-pinned
+	require.Equal(t, errs.StateAddressTaken, errs.CodeOf(err), "%v", err)
+	require.Contains(t, err.Error(), "a moment ago")
 }
 
 // TestR166_AnAppKeepsAPortItWasPinnedToBeforePinsClaimedPorts asserts that an
