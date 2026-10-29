@@ -410,11 +410,11 @@ func (c *client) capacity(t *testing.T) capacity {
 			continue
 		}
 		require.Equal(t, "ok", r.Status, out)
-		cap := capacity{TotalCPU: r.TotalCPU, TotalMem: r.TotalMem, Hosts: map[string]hostRow{}, AsOf: body.AsOf}
+		reading := capacity{TotalCPU: r.TotalCPU, TotalMem: r.TotalMem, Hosts: map[string]hostRow{}, AsOf: body.AsOf}
 		for _, h := range r.Details.Hosts {
-			cap.Hosts[h.Name] = h
+			reading.Hosts[h.Name] = h
 		}
-		return cap
+		return reading
 	}
 	t.Fatalf("no rt_hosts in GET /capacity: %s", out)
 	return capacity{}
@@ -436,12 +436,12 @@ func (c *client) settledCapacity(t *testing.T) capacity {
 	after := time.Now().Add(committedTTL + 2*time.Second)
 	deadline := time.Now().Add(2 * time.Minute)
 	for {
-		cap := c.capacity(t)
-		if cap.AsOf.After(after) {
-			return cap
+		reading := c.capacity(t)
+		if reading.AsOf.After(after) {
+			return reading
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("GET /capacity was not read again after %s: as_of %s", after, cap.AsOf)
+			t.Fatalf("GET /capacity was not read again after %s: as_of %s", after, reading.AsOf)
 		}
 		time.Sleep(2 * time.Second)
 	}
@@ -449,8 +449,8 @@ func (c *client) settledCapacity(t *testing.T) capacity {
 
 // roomiest is the app host placement should choose for a new app: the most
 // free memory, then fewer running workloads, then host-a (listed first).
-func (cap capacity) roomiest() (string, string) {
-	a, b := cap.Hosts["host-a"], cap.Hosts["host-b"]
+func (reading capacity) roomiest() (string, string) {
+	a, b := reading.Hosts["host-a"], reading.Hosts["host-b"]
 	if b.FreeMem > a.FreeMem {
 		return "host-b", "host-a"
 	}
@@ -463,15 +463,15 @@ func (c *client) steerTo(t *testing.T, want string) {
 	t.Helper()
 	other := map[string]string{"host-a": "host-b", "host-b": "host-a"}[want]
 	for range 3 {
-		cap := c.settledCapacity(t)
-		t.Logf("steering to %s: %s free %d, %s free %d", want, want, cap.Hosts[want].FreeMem, other, cap.Hosts[other].FreeMem)
-		if cap.Hosts[want].FreeMem > cap.Hosts[other].FreeMem {
+		reading := c.settledCapacity(t)
+		t.Logf("steering to %s: %s free %d, %s free %d", want, want, reading.Hosts[want].FreeMem, other, reading.Hosts[other].FreeMem)
+		if reading.Hosts[want].FreeMem > reading.Hosts[other].FreeMem {
 			return
 		}
-		fill := cap.Hosts[other].FreeMem - cap.Hosts[want].FreeMem + 128<<20
-		require.LessOrEqual(t, fill, cap.Hosts[other].FreeMem, "cannot steer to %s: %+v", want, cap.Hosts)
+		fill := reading.Hosts[other].FreeMem - reading.Hosts[want].FreeMem + 128<<20
+		require.LessOrEqual(t, fill, reading.Hosts[other].FreeMem, "cannot steer to %s: %+v", want, reading.Hosts)
 		app := c.deployEcho(t, "mh-filler", fill)
-		if cap.Hosts[want].FreeMem < cap.Hosts[other].FreeMem {
+		if reading.Hosts[want].FreeMem < reading.Hosts[other].FreeMem {
 			// Not a tie, so placement had one answer.
 			requireOn(t, app, other)
 		}

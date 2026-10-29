@@ -1041,13 +1041,6 @@ func (a *Apps) Pin(ctx context.Context, appID, specID, newState, pinnedBy string
 // The app's port on another number, on the same adapter, is released: an app
 // has one port per adapter, and pinning a spec that moves it is the move.
 func (a *Apps) claimPort(ctx context.Context, tx pgx.Tx, adapterRef, appID string, port int) error {
-	// A deleted app's hold on the port lapses, as it does in Ports.Allocate.
-	if _, err := tx.Exec(ctx, `
-		DELETE FROM port_allocations
-		WHERE port = $1 AND app_id IN (SELECT id FROM apps WHERE deleted_at IS NOT NULL)`, port); err != nil {
-		return errs.Wrap(errs.Internal, "Could not release the ports of deleted apps.", err)
-	}
-
 	var held bool
 	if err := tx.QueryRow(ctx, `
 		SELECT EXISTS (SELECT 1 FROM port_allocations WHERE adapter_ref = $1 AND app_id = $2 AND port = $3)`,
@@ -1070,8 +1063,13 @@ func (a *Apps) claimPort(ctx context.Context, tx pgx.Tx, adapterRef, appID strin
 				a.PortRangeStart, a.PortRangeEnd))
 	}
 
-	if _, err := tx.Exec(ctx,
-		`DELETE FROM port_allocations WHERE adapter_ref = $1 AND app_id = $2`, adapterRef, appID); err != nil {
+	// The app's previous port on this adapter is released, and a deleted
+	// app's hold on this one lapses, as it does in Ports.Allocate.
+	if _, err := tx.Exec(ctx, `
+		DELETE FROM port_allocations
+		WHERE (adapter_ref = $1 AND app_id = $2)
+		   OR (port = $3 AND app_id IN (SELECT id FROM apps WHERE deleted_at IS NOT NULL))`,
+		adapterRef, appID, port); err != nil {
 		return errs.Wrap(errs.Internal, "Could not release this app's previous port.", err)
 	}
 	if _, err := tx.Exec(ctx,
