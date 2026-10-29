@@ -5,10 +5,16 @@
 -- allowed it; this does not, so two pins racing for one port on different
 -- adapters cannot both commit.
 --
--- A port two adapters already hold stays with the app that was given it
--- first. The other loses only the allocation: it is still pinned to the port,
--- which Ports.Allocate and state.Apps.Pin refuse to hand anyone else, and its
--- next pin of it is refused as taken.
+-- A deleted app's allocations go first: they lapse anyway, the next time a
+-- port is allocated (Ports.Allocate), and one must not keep a port from a
+-- live app below.
+DELETE FROM port_allocations
+ WHERE app_id IN (SELECT id FROM apps WHERE deleted_at IS NOT NULL);
+
+-- A port two adapters still hold stays with the app that was given it first.
+-- The other loses only the allocation: it is still pinned to the port, which
+-- Ports.Allocate and state.Apps.Pin refuse to hand anyone else, and its next
+-- pin of it is refused as taken.
 DELETE FROM port_allocations later
  USING port_allocations earlier
  WHERE later.port = earlier.port

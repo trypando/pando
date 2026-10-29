@@ -55,11 +55,11 @@ func (p *Ports) Allocate(ctx context.Context, adapterRef, appID string, from, to
 	// no longer exist, and the next app was refused a port. Reclaimed here
 	// rather than only at deletion, so a range already full of them recovers
 	// without a migration. InUse has always ignored these rows, which is why
-	// nothing was listening on those ports either.
+	// nothing was listening on those ports either. On every adapter, since a
+	// port held on any of them is taken on all (migration 97).
 	if _, err := p.db.Exec(ctx, `
 		DELETE FROM port_allocations
-		WHERE adapter_ref = $1
-		  AND app_id IN (SELECT id FROM apps WHERE deleted_at IS NOT NULL)`, adapterRef); err != nil {
+		WHERE app_id IN (SELECT id FROM apps WHERE deleted_at IS NOT NULL)`); err != nil {
 		return 0, errs.Wrap(errs.Internal, "Could not release the ports of deleted apps.", err)
 	}
 
