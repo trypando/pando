@@ -52,13 +52,13 @@ type reauthorizing struct {
 }
 
 // Hijack takes over the connection and starts the re-authorization loop.
+//
+// Through a ResponseController, not a type assertion: the writer this wraps is
+// usually another middleware's (the request logger's statusRecorder), which can
+// hijack only through Unwrap. Asserting http.Hijacker on it failed every
+// websocket on an app's hostname with a 502 (R-170).
 func (w *reauthorizing) Hijack() (net.Conn, *bufio.ReadWriter, error) {
-	hijacker, ok := w.ResponseWriter.(http.Hijacker)
-	if !ok {
-		return nil, nil, http.ErrNotSupported
-	}
-
-	conn, rw, err := hijacker.Hijack()
+	conn, rw, err := http.NewResponseController(w.ResponseWriter).Hijack()
 	if err != nil {
 		return nil, nil, err
 	}

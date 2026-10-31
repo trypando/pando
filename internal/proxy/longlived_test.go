@@ -21,6 +21,7 @@ import (
 	"github.com/trypando/pando/internal/core/authz"
 	"github.com/trypando/pando/internal/core/spec"
 	"github.com/trypando/pando/internal/core/state"
+	"github.com/trypando/pando/internal/httpapi"
 	"github.com/trypando/pando/internal/proxy"
 )
 
@@ -96,6 +97,13 @@ func appResolver() *resolver {
 // every interval.
 func socketProxy(t *testing.T, auth proxy.Authenticator, s *store, interval time.Duration) *httptest.Server {
 	t.Helper()
+	front := httptest.NewServer(socketProxyHandler(t, auth, s, interval))
+	t.Cleanup(front.Close)
+	return front
+}
+
+func socketProxyHandler(t *testing.T, auth proxy.Authenticator, s *store, interval time.Duration) *proxy.Proxy {
+	t.Helper()
 	minter, err := assertion.NewMinter("https://pando.test", nil)
 	require.NoError(t, err)
 	p := &proxy.Proxy{
@@ -107,9 +115,7 @@ func socketProxy(t *testing.T, auth proxy.Authenticator, s *store, interval time
 		Logger:        zap.NewNop(),
 	}
 	p.SetReauthInterval(interval)
-	front := httptest.NewServer(p)
-	t.Cleanup(front.Close)
-	return front
+	return p
 }
 
 // awaitClose reads until the proxy closes the connection, and returns the
@@ -146,6 +152,22 @@ func TestR048_RevokingASessionClosesItsOpenWebsocket(t *testing.T) {
 	// The session is revoked: the same cookie now authenticates as nobody.
 	auth.set(authz.Anonymous())
 	require.Equal(t, uint16(1008), awaitClose(t, conn, r, 2*time.Second))
+}
+
+// TestR170_AWebsocketOpensBehindTheRequestLogger asserts that a websocket
+// reaches an app through the middleware every request on an app's hostname
+// passes first. The request logger wraps the response writer in one that can
+// hijack only through Unwrap, and the proxy asserting http.Hijacker on it
+// answered every upgrade with a 502 (R-170).
+func TestR170_AWebsocketOpensBehindTheRequestLogger(t *testing.T) {
+	s := newStore()
+	s.data[appID] = []string{"usr_alice"}
+	auth := &liveAuth{principal: activeUser("usr_alice")}
+	front := httptest.NewServer(httpapi.Logger(zap.NewNop())(socketProxyHandler(t, auth, s, time.Hour)))
+	t.Cleanup(front.Close)
+
+	conn, r := openSocket(t, front)
+	require.Zero(t, awaitClose(t, conn, r, 100*time.Millisecond), "open")
 }
 
 // TestR049_SuspendingAUserClosesTheirOpenWebsocket asserts the same for a
