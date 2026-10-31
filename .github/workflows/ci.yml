@@ -173,6 +173,17 @@ jobs:
     # covers. It runs nightly in corpus.yml instead, and on a pull request that
     # touches detection.
     steps:
+      # The runner starts with about 14 GB free. This job's race-built,
+      # coverage-instrumented test binaries, its restored build cache and the
+      # images testcontainers pulls outgrew that: a run on main hit "no space
+      # left on device" linking test binaries, failed every package after it
+      # and uploaded partial coverage. These toolchains are unused here and
+      # free about 25 GB. Not /opt/hostedtoolcache, which holds Go.
+      - name: Free disk space
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          df -h /
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
