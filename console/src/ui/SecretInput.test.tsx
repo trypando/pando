@@ -51,4 +51,15 @@ describe('SecretInput', () => {
     expect(field().type).toBe('password');
     expect(field().value).toBe('hunter2');
   });
+
+  it('keeps the caret where it was', () => {
+    field().focus();
+    field().setSelectionRange(3, 3);
+    act(() => toggle().click());
+    expect([field().selectionStart, field().selectionEnd]).toEqual([3, 3]);
+  });
+
+  it('leaves room for the toggle at the end of the field', () => {
+    expect(field().style.paddingRight).toBe('var(--control-input)');
+  });
 });
