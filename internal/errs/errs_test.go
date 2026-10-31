@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -94,4 +95,23 @@ func TestR194_SecretInDetailsDoesNotSerialize(t *testing.T) {
 	require.NoError(t, e)
 	require.NotContains(t, string(b), "hunter2-THE-ACTUAL-SECRET")
 	require.Contains(t, string(b), secret.Redacted)
+}
+
+// An error declared once and answered to many requests is stamped with each
+// request's ID on a copy: stamping it in place was a data race under
+// concurrent requests, and could give one response another's request ID.
+func TestASharedErrorIsStampedPerRequest(t *testing.T) {
+	shared := errs.New(errs.AuthInvalid, "This certificate renews nothing.")
+
+	var wg sync.WaitGroup
+	for i := range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			id := fmt.Sprintf("req_%d", i)
+			require.Equal(t, id, shared.WithRequestID(id).RequestID)
+		}()
+	}
+	wg.Wait()
+	require.Empty(t, shared.RequestID, "the shared value is never stamped")
 }
