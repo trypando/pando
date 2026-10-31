@@ -48,7 +48,7 @@ func (l *liveAuth) set(p authz.Principal) {
 }
 
 // upgradingUpstream answers every request by switching protocols and holding
-// the connection open, as a websocket server does.
+// the connection open, as a websocket server does, echoing what it is sent.
 func upgradingUpstream(t *testing.T) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -59,7 +59,7 @@ func upgradingUpstream(t *testing.T) *httptest.Server {
 		defer conn.Close()
 		_, _ = rw.WriteString("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n")
 		_ = rw.Flush()
-		_, _ = io.Copy(io.Discard, conn)
+		_, _ = io.Copy(conn, rw)
 	}))
 	t.Cleanup(srv.Close)
 	return srv
@@ -166,8 +166,17 @@ func TestR170_AWebsocketOpensBehindTheRequestLogger(t *testing.T) {
 	front := httptest.NewServer(httpapi.Logger(zap.NewNop())(socketProxyHandler(t, auth, s, time.Hour)))
 	t.Cleanup(front.Close)
 
+	// Bytes cross the upgraded connection both ways: what the client sends
+	// reaches the app, and the app's echo comes back. A connection closed
+	// after the upgrade fails the read.
 	conn, r := openSocket(t, front)
-	require.Zero(t, awaitClose(t, conn, r, 100*time.Millisecond), "open")
+	_, err := conn.Write([]byte("ping"))
+	require.NoError(t, err)
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	echo := make([]byte, 4)
+	_, err = io.ReadFull(r, echo)
+	require.NoError(t, err)
+	require.Equal(t, "ping", string(echo))
 }
 
 // TestR049_SuspendingAUserClosesTheirOpenWebsocket asserts the same for a
