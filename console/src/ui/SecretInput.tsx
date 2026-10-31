@@ -10,12 +10,14 @@ import { useId, useLayoutEffect, useRef, useState } from 'react';
 import { Icon, IconButton, Input } from '@design';
 import type { InputProps } from '@design';
 
+type SelectionDirection = 'forward' | 'backward' | 'none';
+
 export function SecretInput({ label, id, ...rest }: Readonly<Omit<InputProps, 'type' | 'as'> & { label: string }>) {
   const [shown, setShown] = useState(false);
   const generated = useId();
   const inputId = id ?? generated;
 
-  const caret = useRef<[number | null, number | null] | null>(null);
+  const caret = useRef<[number | null, number | null, SelectionDirection | null] | null>(null);
 
   // Input takes no ref and no style for its box, so its element is found by
   // the id given to it. Its right padding is widened to the toggle's width so
@@ -28,14 +30,14 @@ export function SecretInput({ label, id, ...rest }: Readonly<Omit<InputProps, 't
     // Changing the type can collapse the selection, so it is put back.
     if (caret.current) {
       field.focus();
-      field.setSelectionRange(caret.current[0], caret.current[1]);
+      field.setSelectionRange(caret.current[0], caret.current[1], caret.current[2] ?? undefined);
       caret.current = null;
     }
   }, [shown, inputId]);
 
   const toggle = () => {
     const field = document.getElementById(inputId) as HTMLInputElement | null;
-    caret.current = field ? [field.selectionStart, field.selectionEnd] : null;
+    caret.current = field ? [field.selectionStart, field.selectionEnd, field.selectionDirection] : null;
     setShown(!shown);
   };
 

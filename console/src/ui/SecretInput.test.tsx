@@ -59,6 +59,13 @@ describe('SecretInput', () => {
     expect([field().selectionStart, field().selectionEnd]).toEqual([3, 3]);
   });
 
+  it('keeps a backward selection backward', () => {
+    field().focus();
+    field().setSelectionRange(1, 5, 'backward');
+    act(() => toggle().click());
+    expect([field().selectionStart, field().selectionEnd, field().selectionDirection]).toEqual([1, 5, 'backward']);
+  });
+
   it('leaves room for the toggle at the end of the field', () => {
     expect(field().style.paddingRight).toBe('var(--control-input)');
   });
