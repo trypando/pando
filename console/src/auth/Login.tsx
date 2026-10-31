@@ -23,6 +23,7 @@ import { Banner, Button, Input, Logo, Skeleton } from '@design';
 import { api, RequestFailed } from '@api/client';
 
 import { FieldSkeleton, HeadingSkeleton, LineSkeleton, Loading } from '../ui/Loading';
+import { SecretInput } from '../ui/SecretInput';
 import { TopoMap } from '../ui/TopoBackground';
 import { signInInstead } from './passcode';
 import { returnTo } from './return-to';
@@ -431,9 +432,8 @@ export function Passcode({ appID, signedIn }: { appID: string; signedIn: boolean
         }}
         style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}
       >
-        <Input
+        <SecretInput
           label="Passcode"
-          type="password"
           value={passcode}
           autoComplete="off"
           autoFocus
