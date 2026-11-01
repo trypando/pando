@@ -207,10 +207,16 @@ func (e *Error) WithDetail(key string, value any) *Error {
 	return e
 }
 
-// WithRequestID stamps the envelope. Set by the HTTP layer, not by callers.
+// WithRequestID returns a copy of the envelope stamped with one request's ID.
+// Set by the HTTP layer, not by callers.
+//
+// A copy, unlike the other With methods: an error is often a package-level
+// value answered to many requests at once, and stamping it in place was a data
+// race that could give one response another request's ID.
 func (e *Error) WithRequestID(id string) *Error {
-	e.RequestID = id
-	return e
+	stamped := *e
+	stamped.RequestID = id
+	return &stamped
 }
 
 // Status maps a code to its HTTP status, by prefix.
