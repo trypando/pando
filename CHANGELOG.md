@@ -19,6 +19,22 @@ Unreleased above it. -->
 
 ## [Unreleased]
 
+## [0.17.1] - 2026-11-01
+
+### Security
+
+No new advisories.
+
+### Fixed
+
+- **Websockets reach apps again** (#359). A websocket to an app on its own hostname or under a path
+  was answered with a 502: the proxy could not take over the connection through the request logger
+  in front of it. Apps served on their own port were not affected.
+- **The passcode can be shown while it is typed** (#357). The passcode page has a show and hide
+  toggle on the field, so a mistyped passcode can be seen and fixed.
+- **An error response carries its own request ID.** Two requests refused at the same moment with
+  the same error could each be sent the other's `request_id`.
+
 ## [0.17.0] - 2026-10-29
 
 ### Security
@@ -1569,7 +1585,8 @@ review the proposal as usual.
 The first release. Its notes were generated from the commit log, which is what this file now exists
 to replace; see the release page for the artifact list.
 
-[Unreleased]: https://github.com/trypando/pando/compare/v0.17.0...main
+[Unreleased]: https://github.com/trypando/pando/compare/v0.17.1...main
+[0.17.1]: https://github.com/trypando/pando/compare/v0.17.0...v0.17.1
 [0.17.0]: https://github.com/trypando/pando/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/trypando/pando/compare/v0.15.1...v0.16.0
 [0.15.1]: https://github.com/trypando/pando/compare/v0.15.0...v0.15.1
