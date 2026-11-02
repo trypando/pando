@@ -15,18 +15,24 @@ import (
 // gatedFailover holds each app's promotion until its gate is closed, and
 // records the order promotions began and ended in.
 type gatedFailover struct {
-	mu      sync.Mutex
-	began   []string
-	ended   []string
-	gates   map[string]chan struct{}
-	started map[string]chan struct{}
+	mu       sync.Mutex
+	began    []string
+	ended    []string
+	gates    map[string]chan struct{}
+	started  map[string]chan struct{}
+	finished map[string]chan struct{}
 }
 
 func newGatedFailover(ids ...string) *gatedFailover {
-	f := &gatedFailover{gates: map[string]chan struct{}{}, started: map[string]chan struct{}{}}
+	f := &gatedFailover{
+		gates:    map[string]chan struct{}{},
+		started:  map[string]chan struct{}{},
+		finished: map[string]chan struct{}{},
+	}
 	for _, id := range ids {
 		f.gates[id] = make(chan struct{})
 		f.started[id] = make(chan struct{})
+		f.finished[id] = make(chan struct{})
 	}
 	return f
 }
@@ -46,6 +52,7 @@ func (f *gatedFailover) PromoteStandby(ctx context.Context, id string) error {
 	f.mu.Lock()
 	f.ended = append(f.ended, id)
 	f.mu.Unlock()
+	close(f.finished[id])
 	return nil
 }
 
@@ -77,8 +84,10 @@ func TestR421_ASlowPromotionDoesNotDelayTheNext(t *testing.T) {
 	close(f.gates["app_quick"])
 
 	done := markLostAsync(t, svc)
+	// Wait for the quick app to finish, not only to start: the slow app's
+	// gate opens only after, so the end order below is deterministic (#371).
 	select {
-	case <-f.started["app_quick"]:
+	case <-f.finished["app_quick"]:
 	case <-time.After(5 * time.Second):
 		t.Fatal("the quick app's promotion waited on the slow one")
 	}
