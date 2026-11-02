@@ -19,6 +19,22 @@ Unreleased above it. -->
 
 ## [Unreleased]
 
+## [0.17.2] - 2026-11-02
+
+### Security
+
+No new advisories.
+
+- `golang.org/x/net` is at 0.62.0 (#369), clearing CVE-2026-97045 and CVE-2026-78661 from
+  dependency scans. Both are in its `html` package, which Pando's binary does not compile in.
+
+### Changed
+
+- **Builder base images and bundled images are refreshed** (#364, #366, #367). The static site
+  server (`nginx:1.30-alpine`) and the compiled program runtime (`debian:trixie-slim`) are pinned
+  to their current digests, as are Postgres in `docker-compose.yml` and the registry in
+  `docker-compose.registry.yml`. An app picks up the new base on its next deploy.
+
 ## [0.17.1] - 2026-11-01
 
 ### Security
