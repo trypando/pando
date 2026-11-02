@@ -75,7 +75,7 @@ services:
   # container runtime; not on any app's network, and every request needs the
   # credential.
   registry:
-    image: registry:3.1.2@sha256:01cd312e67026f06f5d89c3e133a4a9adc7cb9eeb9b1194e0b2954dfd770efd2
+    image: registry:3.1.2@sha256:d4032d4cc323c1731c707931ecada07a53076eac38e3b61ae57533f170f2c6c3
     environment:
       # Read-only during the weekly blob collection (below).
       REGISTRY_STORAGE_MAINTENANCE_READONLY: '{"enabled": ${PANDO_REGISTRY_READONLY:-false}}'
@@ -104,7 +104,7 @@ services:
   # The weekly blob collection (O-38). Not started by `up`; run by the
   # schedule above while the registry is read-only.
   registry-gc:
-    image: registry:3.1.2@sha256:01cd312e67026f06f5d89c3e133a4a9adc7cb9eeb9b1194e0b2954dfd770efd2
+    image: registry:3.1.2@sha256:d4032d4cc323c1731c707931ecada07a53076eac38e3b61ae57533f170f2c6c3
     profiles: ["maintenance"]
     command: ["garbage-collect", "--delete-untagged", "/etc/distribution/config.yml"]
     configs:
