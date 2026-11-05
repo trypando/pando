@@ -19,6 +19,12 @@ Unreleased above it. -->
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-11-05
+
+### Security
+
+No new advisories.
+
 ### Added
 
 - Agents connecting to Pando over MCP are given instructions for building apps here (R-424): Pando's
@@ -27,6 +33,14 @@ Unreleased above it. -->
   Administrators with `install.policy.manage` write them under **System → Agents**, with
   `pando instructions set`, or with `PUT /api/v1/instructions`. Anyone signed in reads them with
   `pando instructions show`, `GET /api/v1/instructions` or the `pando_get_instructions` tool.
+
+### Fixed
+
+- **A Cloudflare tunnel deleted in Cloudflare is made again** (#374). Pando kept its tunnel's ID
+  after the tunnel was deleted in Cloudflare's dashboard, and every deploy on the Cloudflare routing
+  option failed with "Configuration for tunnel not found (code 1055)" until Pando restarted. Pando
+  now makes its own tunnel again, points its DNS records at it and gives cloudflared the new token.
+  A tunnel named in the routing option's settings is not replaced; the error says it was deleted.
 
 ## [0.17.2] - 2026-11-02
 
@@ -1610,7 +1624,9 @@ review the proposal as usual.
 The first release. Its notes were generated from the commit log, which is what this file now exists
 to replace; see the release page for the artifact list.
 
-[Unreleased]: https://github.com/trypando/pando/compare/v0.17.1...main
+[Unreleased]: https://github.com/trypando/pando/compare/v0.18.0...main
+[0.18.0]: https://github.com/trypando/pando/compare/v0.17.2...v0.18.0
+[0.17.2]: https://github.com/trypando/pando/compare/v0.17.1...v0.17.2
 [0.17.1]: https://github.com/trypando/pando/compare/v0.17.0...v0.17.1
 [0.17.0]: https://github.com/trypando/pando/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/trypando/pando/compare/v0.15.1...v0.16.0
