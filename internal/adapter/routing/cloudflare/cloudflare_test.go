@@ -40,6 +40,8 @@ type fakeCloudflare struct {
 	deleted map[string]bool
 	// unconfigured answers a live tunnel's configuration with code 1055.
 	unconfigured bool
+	// lookupFails answers a tunnel looked up by ID with a server error.
+	lookupFails bool
 }
 
 func newFake(t *testing.T) (*fakeCloudflare, *httptest.Server) {
@@ -116,6 +118,8 @@ func (f *fakeCloudflare) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		switch {
+		case sub == "" && r.Method == http.MethodGet && f.lookupFails:
+			replyRefused(w, 500, 1000, "Internal error")
 		case sub == "" && r.Method == http.MethodGet && f.deleted[id]:
 			when := "2026-11-02T03:00:00Z"
 			reply(w, 200, tunnel{ID: id, Name: f.tunnels[id], DeletedAt: &when})
@@ -654,5 +658,38 @@ func TestAMissingConfigurationOnALiveTunnelMakesNoNewTunnel(t *testing.T) {
 	_, err = a.Ensure(ctx, subdomain("app_01", "notes.example.com"))
 	require.Error(t, err)
 	require.Contains(t, errs.As(err).Message, "code 1055")
+	require.Len(t, f.tunnels, 1)
+}
+
+func TestNotFoundReadsCloudflaresRefusal(t *testing.T) {
+	refused := func(status, code int) error {
+		return errs.Wrap(errs.AdapterFailed, "refused", &refusal{status: status, errors: []apiError{{Code: code, Message: "x"}}})
+	}
+	require.False(t, notFound(nil))
+	require.False(t, notFound(errs.New(errs.AdapterFailed, "no refusal under it")))
+	require.True(t, notFound(refused(http.StatusNotFound, 1003)))
+	require.True(t, notFound(refused(http.StatusBadRequest, codeTunnelConfigNotFound)))
+	require.False(t, notFound(refused(http.StatusBadRequest, 1000)))
+	require.Contains(t, refused(http.StatusNotFound, 1003).Error(), "HTTP 404: x (code 1003).")
+}
+
+// When the tunnel cannot be looked up to tell whether it was deleted, the
+// original refusal is what is reported, and nothing is made or forgotten.
+func TestATunnelThatCannotBeCheckedIsNotReplaced(t *testing.T) {
+	f, srv := newFake(t)
+	a := configured(t, srv, "")
+	ctx := context.Background()
+
+	h, err := a.Ensure(ctx, subdomain("app_01", "notes.example.com"))
+	require.NoError(t, err)
+	f.mu.Lock()
+	f.unconfigured, f.lookupFails = true, true
+	f.mu.Unlock()
+
+	_, err = a.Ensure(ctx, subdomain("app_01", "notes.example.com"))
+	require.ErrorContains(t, err, "code 1055")
+	_, err = a.Observe(ctx, h)
+	require.ErrorContains(t, err, "code 1055")
+	require.ErrorContains(t, a.Remove(ctx, h), "code 1055")
 	require.Len(t, f.tunnels, 1)
 }
