@@ -34,8 +34,9 @@ func MCPCommand() *cobra.Command {
 			}
 
 			s := &mcp.Server{
-				Version: Version,
-				Call:    mcpCall(c),
+				Version:      Version,
+				Call:         mcpCall(c),
+				Instructions: mcpInstructions(c),
 			}
 			// Stdout is the protocol stream. Anything else written there
 			// corrupts it, which is why every diagnostic in this package goes
@@ -54,5 +55,20 @@ func mcpCall(c *Client) func(ctx context.Context, method, path string, body, out
 			return c.sendBytes(method, path, raw.ContentType, raw.Data, out)
 		}
 		return c.Do(method, path, body, out)
+	}
+}
+
+// mcpInstructions reads what every agent is told (R-424) from the server, for
+// initialize's answer. Nothing when it cannot: a server too old to have them,
+// or one unreachable at that moment, still serves its tools.
+func mcpInstructions(c *Client) func(context.Context) string {
+	return func(context.Context) string {
+		var d struct {
+			Text string `json:"text"`
+		}
+		if err := c.Do("GET", "/instructions", nil, &d); err != nil {
+			return ""
+		}
+		return d.Text
 	}
 }

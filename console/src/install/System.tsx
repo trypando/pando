@@ -17,6 +17,7 @@ import { Sheet } from '../ui/Sheet';
 import { useNarrow } from '../ui/narrow';
 import { AIButton } from '../ui/AskAI';
 import { useAIFunctionOn } from './AIFunctions';
+import { Agents } from './Agents';
 import { Backups } from './Backups';
 import { Hosts } from './Hosts';
 import { Installation } from './Installation';
@@ -33,6 +34,7 @@ const LABELS: Record<SystemTab, string> = {
   overview: 'Overview',
   adapters: 'Adapters',
   policy: 'Policy',
+  agents: 'Agents',
   backups: 'Backups',
   hosts: 'Hosts',
 };
@@ -47,7 +49,9 @@ export function systemPages(can: {
 }): SystemTab[] {
   const pages: SystemTab[] = [];
   if (can.view) pages.push('overview', 'adapters');
-  if (can.view || can.managePolicy) pages.push('policy');
+  // The instructions agents are given (R-424): written by whoever writes
+  // policy, and shown to whoever reads it.
+  if (can.view || can.managePolicy) pages.push('policy', 'agents');
   if (can.manageBackups) pages.push('backups');
   if (can.manageCluster) pages.push('hosts');
   return pages;
@@ -134,6 +138,7 @@ export function System({
               />
             )}
             {tab === 'policy' && <Policy page={policyPage} canEdit={canManagePolicy} />}
+            {tab === 'agents' && <Agents canEdit={canManagePolicy} />}
             {tab === 'backups' && <Backups />}
             {tab === 'hosts' && <Hosts />}
             <SaveBar />

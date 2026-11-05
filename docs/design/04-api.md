@@ -612,6 +612,7 @@ and `2024-11-05` revisions are answered; they differ only in what this server do
 | `pando_ai_search_audit` | `POST /ai/audit/search` |
 | `pando_list_audit_archives` | `GET /audit/archives` |
 | `pando_ai_ask_reference` | `POST /ai/reference/answer` |
+| `pando_get_instructions` | `GET /instructions` |
 
 **[D]** `GET /audit/archives/{id}` has no tool. A tool's result is JSON text, and an archive is a gzip
 file; base64 inside a tool result would be a capability the CLI and console do not need. The list tool
@@ -621,6 +622,16 @@ names the endpoint and `pando audit archives download`, which an agent holding a
 call the agent may not be able to make. The policy draft is `pando_ai_draft_host_rules`, not a name
 containing "policy", because the O-12 test refuses any tool named for policy and this one is not the
 policy mutation that test keeps out.
+
+**[D] Instructions for agents (R-424).** `initialize` answers with `instructions`: Pando's built-in
+guidance (`internal/core/instructions/builtin.md`, compiled in), then the company's part from the
+`agent_instructions` row under a heading saying it wins where the two differ. Over HTTP it is read from
+the service in-process; `pando mcp` reads `GET /instructions` when the client connects and sends none
+when it cannot, so a server without the endpoint still serves its tools. If the company's part cannot
+be read, the built-in part is sent alone. `GET /instructions` needs only a signed-in caller: an agent
+acting for someone with no install verb is exactly who the instructions are for. `PUT /instructions`
+is `install.policy.manage` and has no tool, for the reason policy mutation has none. **[P]** 32 KB for
+the company's part; the column's CHECK is four times that, so the limit can move without a migration.
 
 **[D]** An agent holds a token and is a principal like any other (R-262). No MCP tool bypasses authorization, and every action lands in the audit log under the token's owner.
 

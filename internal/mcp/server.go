@@ -50,6 +50,12 @@ type Server struct {
 	// Version is reported as serverInfo.version. Empty reports "dev".
 	Version string
 
+	// Instructions returns what every agent on this installation is told
+	// (R-424), sent as initialize's instructions, which clients load into
+	// the agent's context. Nil or empty sends none. pando_get_instructions
+	// answers the same for a client that ignores the field.
+	Instructions func(ctx context.Context) string
+
 	out *json.Encoder
 	mu  sync.Mutex
 }
@@ -105,11 +111,17 @@ const maxMessage = 8 * 1024 * 1024
 func (s *Server) handle(ctx context.Context, req request) *response {
 	switch req.Method {
 	case "initialize":
-		return &response{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{
+		result := map[string]any{
 			"protocolVersion": negotiate(req.Params),
 			"capabilities":    map[string]any{"tools": map[string]any{}},
 			"serverInfo":      map[string]any{"name": "pando", "version": s.version()},
-		}}
+		}
+		if s.Instructions != nil {
+			if text := s.Instructions(ctx); text != "" {
+				result["instructions"] = text
+			}
+		}
+		return &response{JSONRPC: "2.0", ID: req.ID, Result: result}
 
 	case "notifications/initialized", "initialized":
 		// A notification: no id, no reply.

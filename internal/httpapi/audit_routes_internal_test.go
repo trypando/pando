@@ -123,6 +123,7 @@ var auditedRoutes = map[string][]string{
 	// The installation.
 	"POST /api/v1/restart":                    {"install.restart"},
 	"PUT /api/v1/policy":                      {"policy.update"},
+	"PUT /api/v1/instructions":                {"instructions.update"},
 	"POST /api/v1/upgrade":                    {"upgrade.start", "upgrade.refused", "upgrade.backup_skipped", "upgrade.failed"},
 	"POST /api/v1/backups":                    {"backup.create", "backup.failed"},
 	"POST /api/v1/backups/{backupID}/verify":  {"backup.verify", "backup.verify.failed"},

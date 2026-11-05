@@ -42,8 +42,8 @@ function open(route: Partial<Route>, go = vi.fn(), policy?: object) {
 
 describe('System’s pages', () => {
   it('lists each page a person may see, Policy’s under it', () => {
-    expect(systemPages({ view: true, managePolicy: true, manageBackups: true })).toEqual(['overview', 'adapters', 'policy', 'backups']);
-    expect(systemPages({ view: false, managePolicy: true, manageBackups: false })).toEqual(['policy']);
+    expect(systemPages({ view: true, managePolicy: true, manageBackups: true })).toEqual(['overview', 'adapters', 'policy', 'agents', 'backups']);
+    expect(systemPages({ view: false, managePolicy: true, manageBackups: false })).toEqual(['policy', 'agents']);
     expect(systemPages({ view: false, managePolicy: false, manageBackups: false })).toEqual([]);
 
     vi.stubGlobal('fetch', () => unanswered());
@@ -60,6 +60,7 @@ describe('System’s pages', () => {
       '/admin/system/policy/tokens',
       '/admin/system/policy/apps',
       '/admin/system/policy/audit',
+      '/admin/system/agents',
       '/admin/system/backups',
     ]);
     expect(document.querySelector('a[aria-current="page"]')?.textContent).toBe('Access');

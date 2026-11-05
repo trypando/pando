@@ -171,6 +171,8 @@ one verb says nothing about another (R-082).
 | `GET /api/v1/capacity` | `install.view` | What the host has, and what is committed to apps (R-242). |
 | `GET /api/v1/policy` | `install.view` | Host policy. Reading the rules you work under is not the same privilege as changing them (R-274). |
 | `PUT /api/v1/policy` | `install.policy.manage` | Replace host policy. Policy is a floor, never an override (R-272). |
+| `GET /api/v1/instructions` |  | What every agent building on this installation is told (R-424): `text`, the whole document MCP sends in its initialize answer; `builtin`, Pando's own guidance for this release; `company`, what administrators wrote, empty when nothing is; and who saved it last (`updated_by`, `updated_at`). Anyone signed in can read it. |
+| `PUT /api/v1/instructions` | `install.policy.manage` | Replace the company's part with `company`, at most 32 KB of text; an empty string clears it. Agents get it after Pando's guidance, under a heading saying it wins where the two differ, from the next time they connect (R-424). |
 | `GET /api/v1/ai/functions` | `install.view` | List every AI function, the adapter that handles it and on which model, whether it is on, and whether the startup configuration assigns it (R-259, R-271). |
 | `PUT /api/v1/ai/functions/{function}` | `install.adapters.manage` | Assign an AI function to an adapter, optionally on a model of its own. Refused while another adapter handles it (R-259). |
 | `DELETE /api/v1/ai/functions/{function}` | `install.adapters.manage` | Turn an AI function off by removing its assignment (R-259). |

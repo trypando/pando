@@ -141,6 +141,8 @@ var summaries = map[string]string{
 
 	"install.restart": "Restarted Pando",
 
+	"instructions.update": "Changed the instructions for agents",
+
 	"launcher.section.create":  "Created a launcher section",
 	"launcher.section.delete":  "Deleted a launcher section",
 	"launcher.section.place":   "Added {app} to a launcher section",

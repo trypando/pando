@@ -163,9 +163,9 @@ installation calls home to. Being a link, it is no capability the API lacks (R-2
 one *System* item in the admin sidebar (issue #154), with a list of its pages on the left, the same
 list as an app's Settings, and one page at a time: **Overview**, **Adapters**, **Policy** with its
 seven pages under it (*Sources and builds, Access, Egress, Deployments, Tokens, Apps, Audit log*),
-and **Backups**. At phone width the list is a select at the top. Each page is shown on the verb it
+**Agents**, and **Backups**. At phone width the list is a select at the top. Each page is shown on the verb it
 needed as an item of its own — Overview and Adapters on `install.view`, Policy on `install.view` or
-`install.policy.manage`, Backups on `install.backup.manage` — and *System* is shown when any is, so
+`install.policy.manage`, Agents on the same as Policy, Backups on `install.backup.manage` — and *System* is shown when any is, so
 nobody sees a page there they could not see before. The count of versions behind (R-351) is on
 *System* and beside Overview. Each page is at `/admin/system/{page}`, Policy's at
 `/admin/system/policy/{page}` and an adapter category at `/admin/system/adapters/{category}`;
@@ -174,6 +174,10 @@ nobody sees a page there they could not see before. The count of versions behind
 `/admin/installation` still open the right page — Updates is now part of Overview. *Sign-in* stays
 an item of its own beside Accounts, though identity providers are adapters: it is about who can sign
 in.
+
+*Agents* is the company's instructions for agents (R-424): one text field, saved by its own button
+rather than Policy's save bar, since `PUT /instructions` is not `PUT /policy`, and editable only with
+`install.policy.manage`. Pando's guidance is under it, hidden until shown, for reference.
 
 *Overview* holds what is too small to be a page: a *Pando* card (running and latest version,
 status, when checked; Upgrade, with its confirmation; Release notes and Update settings, each opened

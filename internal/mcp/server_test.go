@@ -658,3 +658,25 @@ func TestSetAppIconRefusesBadBase64WithoutCallingTheAPI(t *testing.T) {
 	require.Empty(t, s.calls)
 	require.Equal(t, true, result(t, replies[0])["isError"])
 }
+
+// TestR424_InitializeCarriesTheInstructionsForAgents asserts R-424: what every
+// agent is told is in initialize's answer, which clients load into the agent's
+// context, and the same text is a tool for a client that ignores the field.
+func TestR424_InitializeCarriesTheInstructionsForAgents(t *testing.T) {
+	srv, s := newSession()
+	srv.Instructions = func(context.Context) string { return "Store data in Postgres." }
+	res := result(t, s.run(t, srv, rpc(1, "initialize", `{}`))[0])
+	require.Equal(t, "Store data in Postgres.", res["instructions"])
+	require.Empty(t, s.calls, "read without a tool call")
+
+	srv, s = newSession()
+	srv.Instructions = func(context.Context) string { return "" }
+	require.NotContains(t, result(t, s.run(t, srv, rpc(1, "initialize", `{}`))[0]), "instructions", "none sends none")
+
+	srv, s = newSession()
+	require.NotContains(t, result(t, s.run(t, srv, rpc(1, "initialize", `{}`))[0]), "instructions")
+
+	srv, s = newSession()
+	s.run(t, srv, call(1, "pando_get_instructions", `{}`))
+	require.Equal(t, []apiCall{{method: "GET", path: "/instructions"}}, s.calls)
+}
