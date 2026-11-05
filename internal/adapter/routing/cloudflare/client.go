@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -96,7 +97,9 @@ func (c *client) do(ctx context.Context, method, path string, query url.Values, 
 			WithRemedy(tokenRemedy)
 	}
 	if !env.Success || resp.StatusCode >= 300 {
-		return errs.Newf(errs.AdapterFailed, "Cloudflare refused %s %s: %s", method, path, joinErrors(env.Errors))
+		return errs.Wrap(errs.AdapterFailed,
+			fmt.Sprintf("Cloudflare refused %s %s: %s", method, path, joinErrors(env.Errors)),
+			&refusal{status: resp.StatusCode, errors: env.Errors})
 	}
 	if out != nil && len(env.Result) > 0 {
 		if err := json.Unmarshal(env.Result, out); err != nil {
@@ -105,6 +108,38 @@ func (c *client) do(ctx context.Context, method, path string, query url.Values, 
 	}
 	return nil
 }
+
+// refusal is what Cloudflare answered when it refused a call, kept under the
+// error a caller sees so the adapter can tell one refusal from another.
+type refusal struct {
+	status int
+	errors []apiError
+}
+
+func (r *refusal) Error() string {
+	return fmt.Sprintf("HTTP %d: %s", r.status, joinErrors(r.errors))
+}
+
+// notFound reports whether Cloudflare refused a call because what it named
+// does not exist: HTTP 404, or a tunnel whose configuration it no longer has
+// (code 1055), which is how a deleted tunnel's configuration answers.
+func notFound(err error) bool {
+	var r *refusal
+	if !errors.As(err, &r) {
+		return false
+	}
+	if r.status == http.StatusNotFound {
+		return true
+	}
+	for _, e := range r.errors {
+		if e.Code == codeTunnelConfigNotFound {
+			return true
+		}
+	}
+	return false
+}
+
+const codeTunnelConfigNotFound = 1055
 
 func joinErrors(list []apiError) string {
 	if len(list) == 0 {
@@ -141,6 +176,9 @@ func (c *client) zoneByName(ctx context.Context, name string) (zone, error) {
 type tunnel struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
+	// DeletedAt is set on a deleted tunnel, which Cloudflare still returns by
+	// ID.
+	DeletedAt *string `json:"deleted_at,omitempty"`
 }
 
 func (c *client) tunnelByName(ctx context.Context, account, name string) (*tunnel, error) {

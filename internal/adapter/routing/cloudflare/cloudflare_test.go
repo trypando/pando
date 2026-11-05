@@ -35,10 +35,15 @@ type fakeCloudflare struct {
 	nextID  int
 	refuse  bool
 	puts    int
+	// deleted tunnels are kept, as Cloudflare keeps them: still returned by
+	// ID, with deleted_at, and without their configuration.
+	deleted map[string]bool
+	// unconfigured answers a live tunnel's configuration with code 1055.
+	unconfigured bool
 }
 
 func newFake(t *testing.T) (*fakeCloudflare, *httptest.Server) {
-	f := &fakeCloudflare{t: t, tunnels: map[string]string{}, config: map[string]json.RawMessage{}, records: map[string]dnsRecord{}, inZone: map[string]string{}}
+	f := &fakeCloudflare{t: t, tunnels: map[string]string{}, config: map[string]json.RawMessage{}, records: map[string]dnsRecord{}, inZone: map[string]string{}, deleted: map[string]bool{}}
 	srv := httptest.NewServer(http.HandlerFunc(f.serve))
 	t.Cleanup(srv.Close)
 	return f, srv
@@ -53,6 +58,13 @@ func reply(w http.ResponseWriter, status int, result any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(map[string]any{"success": status < 300, "errors": []any{}, "result": result})
+}
+
+func replyRefused(w http.ResponseWriter, status, code int, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]any{"success": false,
+		"errors": []map[string]any{{"code": code, "message": message}}, "result": nil})
 }
 
 func (f *fakeCloudflare) serve(w http.ResponseWriter, r *http.Request) {
@@ -82,7 +94,7 @@ func (f *fakeCloudflare) serve(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodGet && p == tunnels:
 		var out []tunnel
 		for id, name := range f.tunnels {
-			if name == r.URL.Query().Get("name") {
+			if name == r.URL.Query().Get("name") && !f.deleted[id] {
 				out = append(out, tunnel{ID: id, Name: name})
 			}
 		}
@@ -104,8 +116,15 @@ func (f *fakeCloudflare) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		switch {
+		case sub == "" && r.Method == http.MethodGet && f.deleted[id]:
+			when := "2026-11-02T03:00:00Z"
+			reply(w, 200, tunnel{ID: id, Name: f.tunnels[id], DeletedAt: &when})
 		case sub == "" && r.Method == http.MethodGet:
 			reply(w, 200, tunnel{ID: id, Name: f.tunnels[id]})
+		case sub == "configurations" && (f.deleted[id] || f.unconfigured):
+			replyRefused(w, 404, 1055, "Configuration for tunnel not found")
+		case f.deleted[id]:
+			reply(w, 404, nil)
 		case sub == "token":
 			reply(w, 200, "run-token-"+id)
 		case sub == "configurations" && r.Method == http.MethodGet:
@@ -505,4 +524,135 @@ func TestARecordOutsideEveryZoneIsRefused(t *testing.T) {
 	a := configured(t, srv, "")
 	err := a.ensureRecord(context.Background(), "x.other.net", "t")
 	require.ErrorContains(t, err, "is not in the Cloudflare zone example.com")
+}
+
+// deleteTunnel deletes a tunnel as Cloudflare's dashboard does.
+func (f *fakeCloudflare) deleteTunnel(id string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.deleted[id] = true
+	delete(f.config, id)
+}
+
+// liveTunnel is the one tunnel not deleted.
+func (f *fakeCloudflare) liveTunnel(t *testing.T) string {
+	t.Helper()
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var live []string
+	for id := range f.tunnels {
+		if !f.deleted[id] {
+			live = append(live, id)
+		}
+	}
+	require.Len(t, live, 1)
+	return live[0]
+}
+
+// TestR174_ATunnelDeletedInCloudflareIsMadeAgain asserts that Pando's own
+// tunnel, deleted in Cloudflare's dashboard while Pando remembered its ID, is
+// made again on the next route or edge pass rather than every route failing
+// with "Configuration for tunnel not found" until Pando restarts.
+func TestR174_ATunnelDeletedInCloudflareIsMadeAgain(t *testing.T) {
+	f, srv := newFake(t)
+	a := configured(t, srv, `,"console_hostname":"pando.example.com"`)
+	ctx := context.Background()
+
+	_, err := a.Ensure(ctx, subdomain("app_01", "notes.example.com"))
+	require.NoError(t, err)
+	before := f.onlyTunnel(t)
+	f.deleteTunnel(before)
+
+	_, err = a.Ensure(ctx, subdomain("app_01", "notes.example.com"))
+	require.NoError(t, err)
+	after := f.liveTunnel(t)
+	require.NotEqual(t, before, after)
+	require.Equal(t, "pando-example.com", f.tunnels[after])
+	require.Equal(t, upstream, f.ingress(t, after)[0].Service)
+	rec, ok := f.record("notes.example.com")
+	require.True(t, ok)
+	require.Equal(t, after+".cfargotunnel.com", rec.Content, "the record follows the new tunnel")
+
+	plan, _, err := a.Edge(ctx, api.EdgeRequest{Ref: "rte_cf", ProxyUpstream: upstream})
+	require.NoError(t, err)
+	require.Equal(t, "run-token-"+after, plan.Env["TUNNEL_TOKEN"].Reveal(), "cloudflared runs the new tunnel")
+}
+
+// The edge pass, too, makes the tunnel again when it is the first to find it
+// gone.
+func TestR174_TheEdgeMakesADeletedTunnelAgain(t *testing.T) {
+	f, srv := newFake(t)
+	a := configured(t, srv, `,"console_hostname":"pando.example.com"`)
+	ctx := context.Background()
+
+	_, _, err := a.Edge(ctx, api.EdgeRequest{Ref: "rte_cf", ProxyUpstream: upstream})
+	require.NoError(t, err)
+	f.deleteTunnel(f.onlyTunnel(t))
+
+	plan, _, err := a.Edge(ctx, api.EdgeRequest{Ref: "rte_cf", ProxyUpstream: upstream})
+	require.NoError(t, err)
+	after := f.liveTunnel(t)
+	require.Equal(t, "run-token-"+after, plan.Env["TUNNEL_TOKEN"].Reveal())
+	rec, ok := f.record("pando.example.com")
+	require.True(t, ok)
+	require.Equal(t, after+".cfargotunnel.com", rec.Content)
+}
+
+// A deleted tunnel took its rules with it: Observe reports the route absent,
+// and Remove still removes Pando's record.
+func TestARouteOnADeletedTunnelIsAbsentAndItsRecordRemoved(t *testing.T) {
+	f, srv := newFake(t)
+	a := configured(t, srv, "")
+	ctx := context.Background()
+
+	h, err := a.Ensure(ctx, subdomain("app_01", "notes.example.com"))
+	require.NoError(t, err)
+	f.deleteTunnel(f.onlyTunnel(t))
+
+	state, err := a.Observe(ctx, h)
+	require.NoError(t, err)
+	require.False(t, state.Present)
+
+	require.NoError(t, a.Remove(ctx, h))
+	_, ok := f.record("notes.example.com")
+	require.False(t, ok)
+}
+
+// A tunnel named in the settings is not Pando's to replace: its deletion is an
+// error that says so.
+func TestADeletedNamedTunnelIsNamedNotReplaced(t *testing.T) {
+	f, srv := newFake(t)
+	existing := "6ff42ae2-765d-4adf-8112-31c55c1551ef"
+	f.tunnels[existing] = "home-lab"
+	a := configured(t, srv, `,"tunnel_id":"`+existing+`"`)
+	ctx := context.Background()
+
+	_, err := a.Ensure(ctx, subdomain("app_01", "notes.example.com"))
+	require.NoError(t, err)
+	f.deleteTunnel(existing)
+
+	_, err = a.Ensure(ctx, subdomain("app_01", "notes.example.com"))
+	require.Error(t, err)
+	require.Contains(t, errs.As(err).Message, existing+", named in this routing adapter's settings, has been deleted")
+	require.NotEmpty(t, errs.As(err).Remedy)
+	require.Len(t, f.tunnels, 1, "no tunnel made in its place")
+}
+
+// Code 1055 from a tunnel that still exists is passed on, not taken as the
+// tunnel being gone.
+func TestAMissingConfigurationOnALiveTunnelMakesNoNewTunnel(t *testing.T) {
+	f, srv := newFake(t)
+	a := configured(t, srv, "")
+	ctx := context.Background()
+
+	_, err := a.Ensure(ctx, subdomain("app_01", "notes.example.com"))
+	require.NoError(t, err)
+	f.mu.Lock()
+	f.unconfigured = true
+	f.mu.Unlock()
+
+	_, err = a.Ensure(ctx, subdomain("app_01", "notes.example.com"))
+	require.Error(t, err)
+	require.Contains(t, errs.As(err).Message, "code 1055")
+	require.Len(t, f.tunnels, 1)
 }
