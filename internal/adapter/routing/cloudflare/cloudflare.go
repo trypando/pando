@@ -222,15 +222,13 @@ func (a *Adapter) Ensure(ctx context.Context, r api.RouteRequest) (api.RouteHand
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	tunnelID, err := a.ensureTunnel(ctx)
-	if err != nil {
-		return api.RouteHandle{}, err
-	}
-	if err := a.ensureRecord(ctx, rule.Hostname, tunnelID); err != nil {
-		return api.RouteHandle{}, err
-	}
-	if err := a.updateIngress(ctx, tunnelID, func(rules []ingressRule) []ingressRule {
-		return upsert(rules, rule)
+	if _, err := a.onTunnel(ctx, func(tunnelID string) error {
+		if err := a.ensureRecord(ctx, rule.Hostname, tunnelID); err != nil {
+			return err
+		}
+		return a.updateIngress(ctx, tunnelID, func(rules []ingressRule) []ingressRule {
+			return upsert(rules, rule)
+		})
 	}); err != nil {
 		return api.RouteHandle{}, err
 	}
@@ -253,7 +251,7 @@ func (a *Adapter) Remove(ctx context.Context, h api.RouteHandle) error {
 		return err
 	}
 	stillUsed := false
-	if err := a.updateIngress(ctx, tunnelID, func(rules []ingressRule) []ingressRule {
+	err = a.updateIngress(ctx, tunnelID, func(rules []ingressRule) []ingressRule {
 		out := rules[:0]
 		for _, r := range rules {
 			if r.Hostname == host && r.Path == path {
@@ -265,8 +263,13 @@ func (a *Adapter) Remove(ctx context.Context, h api.RouteHandle) error {
 			out = append(out, r)
 		}
 		return out
-	}); err != nil {
-		return err
+	})
+	if err != nil {
+		// A tunnel deleted in Cloudflare took its rules with it; what is
+		// left to remove is the record.
+		if gone, gerr := a.goneAfter(ctx, tunnelID, err); gerr != nil || !gone {
+			return err
+		}
 	}
 	if stillUsed || host == a.config.ConsoleHostname {
 		return nil
@@ -287,6 +290,13 @@ func (a *Adapter) Observe(ctx context.Context, h api.RouteHandle) (api.RouteStat
 	}
 	cfg, err := a.api.tunnelConfig(ctx, a.config.AccountID, tunnelID)
 	if err != nil {
+		// Deleted in Cloudflare, so the route is not there.
+		a.mu.Lock()
+		gone, gerr := a.goneAfter(ctx, tunnelID, err)
+		a.mu.Unlock()
+		if gerr == nil && gone {
+			return api.RouteState{}, nil
+		}
 		return api.RouteState{}, err
 	}
 	for _, r := range cfg.Ingress {
@@ -307,18 +317,18 @@ func (a *Adapter) Edge(ctx context.Context, r api.EdgeRequest) (api.EdgePlan, bo
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	tunnelID, err := a.ensureTunnel(ctx)
+	tunnelID, err := a.onTunnel(ctx, func(tunnelID string) error {
+		if err := a.ensureRecord(ctx, a.config.ConsoleHostname, tunnelID); err != nil {
+			return err
+		}
+		// The console's hostname, and last, everything else the tunnel is
+		// asked for: Pando answers a hostname that is not an app's with the
+		// console.
+		return a.updateIngress(ctx, tunnelID, func(rules []ingressRule) []ingressRule {
+			return upsert(rules, ingressRule{Hostname: a.config.ConsoleHostname, Service: r.ProxyUpstream})
+		}, r.ProxyUpstream)
+	})
 	if err != nil {
-		return api.EdgePlan{}, false, err
-	}
-	if err := a.ensureRecord(ctx, a.config.ConsoleHostname, tunnelID); err != nil {
-		return api.EdgePlan{}, false, err
-	}
-	// The console's hostname, and last, everything else the tunnel is asked
-	// for: Pando answers a hostname that is not an app's with the console.
-	if err := a.updateIngress(ctx, tunnelID, func(rules []ingressRule) []ingressRule {
-		return upsert(rules, ingressRule{Hostname: a.config.ConsoleHostname, Service: r.ProxyUpstream})
-	}, r.ProxyUpstream); err != nil {
 		return api.EdgePlan{}, false, err
 	}
 
@@ -361,7 +371,11 @@ func (a *Adapter) knownTunnel(ctx context.Context) (string, error) {
 // ensureTunnel finds the tunnel, creating Pando's own when none is named.
 func (a *Adapter) ensureTunnel(ctx context.Context) (string, error) {
 	if a.config.TunnelID != "" {
-		if _, err := a.api.tunnel(ctx, a.config.AccountID, a.config.TunnelID); err != nil {
+		t, err := a.api.tunnel(ctx, a.config.AccountID, a.config.TunnelID)
+		if notFound(err) || (err == nil && t.DeletedAt != nil) {
+			return "", a.namedTunnelDeleted()
+		}
+		if err != nil {
 			return "", fmt.Errorf("the tunnel %s: %w", a.config.TunnelID, err)
 		}
 		return a.config.TunnelID, nil
@@ -376,6 +390,60 @@ func (a *Adapter) ensureTunnel(ctx context.Context) (string, error) {
 	}
 	a.tunnelID = t.ID
 	return t.ID, nil
+}
+
+// onTunnel runs fn against the tunnel. When Cloudflare answers that the tunnel
+// is gone — deleted in its dashboard while Pando remembered its ID — Pando's
+// own tunnel is made again and fn run once more against it; the next edge
+// pass hands cloudflared the new tunnel's token. A tunnel named in the
+// settings is not Pando's to replace, so that is an error saying so.
+func (a *Adapter) onTunnel(ctx context.Context, fn func(tunnelID string) error) (string, error) {
+	tunnelID, err := a.ensureTunnel(ctx)
+	if err != nil {
+		return "", err
+	}
+	err = fn(tunnelID)
+	if err == nil {
+		return tunnelID, nil
+	}
+	if gone, gerr := a.goneAfter(ctx, tunnelID, err); gerr != nil || !gone {
+		return tunnelID, err
+	}
+	if a.config.TunnelID != "" {
+		return tunnelID, a.namedTunnelDeleted()
+	}
+	if tunnelID, err = a.ensureTunnel(ctx); err != nil {
+		return "", err
+	}
+	return tunnelID, fn(tunnelID)
+}
+
+// goneAfter reports whether err, from a call on tunnelID, was because the
+// tunnel was deleted, and forgets Pando's own tunnel if so. A call refused as
+// not found is checked against the tunnel itself, which Cloudflare still
+// returns by ID once deleted, rather than taken at its word.
+func (a *Adapter) goneAfter(ctx context.Context, tunnelID string, err error) (bool, error) {
+	if !notFound(err) {
+		return false, nil
+	}
+	t, terr := a.api.tunnel(ctx, a.config.AccountID, tunnelID)
+	switch {
+	case notFound(terr):
+	case terr != nil:
+		return false, terr
+	case t.DeletedAt == nil:
+		return false, nil
+	}
+	if a.tunnelID == tunnelID {
+		a.tunnelID = ""
+	}
+	return true, nil
+}
+
+func (a *Adapter) namedTunnelDeleted() error {
+	return errs.Newf(errs.AdapterFailed,
+		"The Cloudflare tunnel %s, named in this routing adapter's settings, has been deleted.", a.config.TunnelID).
+		WithRemedy("Name a tunnel that exists in the adapter's settings, or clear Existing tunnel so Pando makes its own.")
 }
 
 // updateIngress reads the ingress, applies change, keeps the catch-all last,
