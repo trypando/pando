@@ -18,6 +18,7 @@ import (
 // Writing is install.policy.manage: these are rules agents work under, like
 // host policy's, and the same people set them.
 
+// handleGetInstructions answers GET /instructions for anyone signed in.
 func (s *Server) handleGetInstructions(w http.ResponseWriter, r *http.Request) {
 	if PrincipalFrom(r.Context()).Kind == authz.KindAnonymous {
 		Error(w, r, errs.New(errs.AuthRequired, "You need to sign in."))
@@ -34,6 +35,7 @@ func (s *Server) handleGetInstructions(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusOK, d)
 }
 
+// handlePutInstructions replaces the company's part, and audits it.
 func (s *Server) handlePutInstructions(w http.ResponseWriter, r *http.Request) {
 	p, ok := s.requireInstall(w, r, authz.InstallPolicyManage)
 	if !ok || !s.instructionsConfigured(w, r) {
@@ -72,6 +74,8 @@ func (s *Server) handlePutInstructions(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusOK, d)
 }
 
+// instructionsConfigured refuses when the installation keeps no
+// instructions, as a server built without the store does.
 func (s *Server) instructionsConfigured(w http.ResponseWriter, r *http.Request) bool {
 	if s.Instructions != nil {
 		return true

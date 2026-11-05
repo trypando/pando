@@ -2,7 +2,7 @@
 // the company's part, which administrators with install.policy.manage edit
 // here, and Pando's own guidance, shown for reference and never edited.
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Banner, Button, CodeBlock, Input } from '@design';
 
@@ -22,6 +22,17 @@ export interface Instructions {
 
 const KEY = ['instructions'];
 
+/**
+ * What the field holds once the server sends `incoming`: the server's value
+ * while the field is as the server last left it (`last`), and otherwise the
+ * person's own edits, which a save in flight or a later refresh must not
+ * throw away.
+ */
+export function nextDraft(draft: string, last: string, incoming: string): string {
+  return draft === last ? incoming : draft;
+}
+
+/** System's Agents page: the company's instructions, and Pando's guidance. */
 export function Agents({ canEdit }: Readonly<{ canEdit: boolean }>) {
   const doc = useQuery({ queryKey: KEY, queryFn: () => api.get<Instructions>('/instructions') });
   return (
@@ -33,12 +44,18 @@ export function Agents({ canEdit }: Readonly<{ canEdit: boolean }>) {
   );
 }
 
+/** The instructions once loaded: the field, its Save, and Pando's guidance. */
 function AgentsForm({ doc, canEdit }: Readonly<{ doc: Instructions; canEdit: boolean }>) {
   const queries = useQueryClient();
   const [company, setCompany] = useState(doc.company);
+  // The server's value the field was last given, to tell an untouched field
+  // from an edited one when a new value arrives.
+  const [last, setLast] = useState(doc.company);
   const [showBuiltin, setShowBuiltin] = useState(false);
-  // What was saved, once it comes back from the server.
-  useEffect(() => setCompany(doc.company), [doc.company]);
+  if (doc.company !== last) {
+    setLast(doc.company);
+    setCompany(nextDraft(company, last, doc.company));
+  }
 
   const save = useMutation({
     mutationFn: () => api.put<Instructions>('/instructions', { company }),

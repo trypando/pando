@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { mount, reply, type Mounted } from '../ui/testing';
-import { Agents, type Instructions } from './Agents';
+import { Agents, nextDraft, type Instructions } from './Agents';
 
 // R-424: the company's instructions for agents, edited by whoever manages
 // policy, with Pando's own guidance beside them.
@@ -103,5 +103,12 @@ describe('the Agents page', () => {
     await screen.settle(() => undefined);
     await screen.settle(() => undefined);
     expect(screen.text()).toContain('Could not read the instructions for agents.');
+  });
+});
+
+describe('nextDraft', () => {
+  it('takes the server’s value into an untouched field, and keeps edits', () => {
+    expect(nextDraft('Use Go.', 'Use Go.', 'Use Rust.')).toBe('Use Rust.');
+    expect(nextDraft('Use Zig.', 'Use Go.', 'Use Rust.')).toBe('Use Zig.');
   });
 });
