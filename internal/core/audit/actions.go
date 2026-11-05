@@ -137,6 +137,7 @@ var Actions = []string{
 	"identity_provider.test",
 	"identity_provider.update",
 	"install.restart",
+	"instructions.update",
 	"launcher.section.create",
 	"launcher.section.delete",
 	"launcher.section.place",

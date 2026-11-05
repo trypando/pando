@@ -37,6 +37,7 @@ import (
 	"github.com/trypando/pando/internal/core/idle"
 	"github.com/trypando/pando/internal/core/idp"
 	"github.com/trypando/pando/internal/core/imageregistry"
+	"github.com/trypando/pando/internal/core/instructions"
 	"github.com/trypando/pando/internal/core/liveness"
 	"github.com/trypando/pando/internal/core/logstream"
 	"github.com/trypando/pando/internal/core/notice"
@@ -187,6 +188,10 @@ type Server struct {
 	// Notices is what an app's Overview asks of somebody, and each person's
 	// ignores of them (R-412). Nil answers that notices are unavailable.
 	Notices *notice.Service
+
+	// Instructions is what agents building on this installation are told
+	// (R-424). Nil answers that there are none.
+	Instructions *instructions.Service
 
 	// Inbox is the console notifications a person reads (R-377).
 	Inbox *subscription.Inbox
@@ -823,6 +828,11 @@ func (s *Server) Routes() http.Handler {
 		r.Get("/policy", s.handleGetPolicy)
 		r.Get("/config", s.handleGetConfig)
 		r.Put("/policy", s.handlePutPolicy)
+
+		// The instructions for agents (R-424): read by anyone signed in, so
+		// every agent gets them; written with install.policy.manage.
+		r.Get("/instructions", s.handleGetInstructions)
+		r.Put("/instructions", s.handlePutInstructions)
 
 		// What this policy would block, before it is saved (design 05 §3).
 		// Behind the write verb rather than install.view: the body is a policy

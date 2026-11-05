@@ -38,6 +38,7 @@
         "pando group",
         "pando host-agent",
         "pando identity-provider",
+        "pando instructions",
         "pando join",
         "pando login",
         "pando logs",
@@ -4550,6 +4551,109 @@
       "hidden": false,
       "deprecated": "",
       "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando instructions",
+      "use": "instructions",
+      "short": "Read and set the instructions every agent is given",
+      "long": "Agents connecting over MCP are given Pando's guidance for building apps here, then the\ncompany's own instructions, which win where the two differ.",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        }
+      ],
+      "subcommands": [
+        "pando instructions set",
+        "pando instructions show"
+      ]
+    },
+    {
+      "path": "pando instructions set",
+      "use": "set",
+      "short": "Replace the company's instructions with text read from stdin",
+      "long": "Reads the company's instructions as text on stdin, at most 32 KB, and replaces the current\nones. Empty input clears them. Needs install.policy.manage.\n\n  pando instructions set < instructions.md",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando instructions show",
+      "use": "show",
+      "short": "Print the instructions agents are given",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "company",
+          "shorthand": "",
+          "type": "bool",
+          "default": "false",
+          "usage": "print only the company's instructions",
+          "required": false
+        }
+      ],
       "inherited_flags": [
         {
           "name": "config",

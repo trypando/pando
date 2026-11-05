@@ -19,6 +19,15 @@ Unreleased above it. -->
 
 ## [Unreleased]
 
+### Added
+
+- Agents connecting to Pando over MCP are given instructions for building apps here (R-424): Pando's
+  guidance on using its sign-in, keeping secrets out of the repository, storing data in volumes and
+  writing secure code, then your organization's own instructions, which win where the two differ.
+  Administrators with `install.policy.manage` write them under **System → Agents**, with
+  `pando instructions set`, or with `PUT /api/v1/instructions`. Anyone signed in reads them with
+  `pando instructions show`, `GET /api/v1/instructions` or the `pando_get_instructions` tool.
+
 ## [0.17.2] - 2026-11-02
 
 ### Security

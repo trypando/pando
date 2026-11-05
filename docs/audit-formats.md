@@ -194,6 +194,7 @@ is encoded as 6003 API Activity, 99 Other.
 | `identity_provider.test` | 6003 API Activity | 2 Read | 600302 |
 | `identity_provider.update` | 6003 API Activity | 3 Update | 600303 |
 | `install.restart` | 6003 API Activity | 99 Other | 600399 |
+| `instructions.update` | 6003 API Activity | 3 Update | 600303 |
 | `launcher.section.create` | 6003 API Activity | 1 Create | 600301 |
 | `launcher.section.delete` | 6003 API Activity | 4 Delete | 600304 |
 | `launcher.section.place` | 6003 API Activity | 3 Update | 600303 |

@@ -587,6 +587,21 @@ than in the app's spec so that the app's owner cannot remove it (R-154).
 
 **[D]** `ai_assignments.adapter_id` has no foreign key, deliberately: a declared adapter can be assigned a function from the console and has no `adapter_configs` row to reference. An assignment whose adapter is not running leaves the function off. The primary key makes a second adapter for one function impossible rather than a handler's check; `PUT /ai/functions/{function}` updates a row only when it already names the same adapter, and otherwise returns `STATE_AI_FUNCTION_ASSIGNED`.
 
+```sql
+CREATE TABLE agent_instructions (
+    id          integer PRIMARY KEY DEFAULT 1 CHECK (id = 1),  -- singleton, R-015
+    body        text NOT NULL CHECK (octet_length(body) <= 131072),
+    updated_by  text NOT NULL,
+    created_at  timestamptz NOT NULL DEFAULT now(),
+    updated_at  timestamptz NOT NULL DEFAULT now()
+);
+```
+
+**[D]** The company's instructions for agents (R-424). Only the company's part is stored; Pando's own
+guidance is compiled into the binary, so an upgrade changes it without touching this row. Not a
+`host_policy` field: `PUT /policy` replaces the whole document, and instructions are prose agents read,
+not a rule Pando enforces.
+
 ### 2.6 Audit
 
 Migration 000067 (issue #129) adds `txid`, the transaction that wrote each row, which the audit stream

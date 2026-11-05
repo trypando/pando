@@ -1678,6 +1678,18 @@ var toolList = []tool{
 		},
 	},
 	{
+		Name: "pando_get_instructions",
+		Description: "The instructions every agent building on this installation follows: Pando's " +
+			"guidance for writing apps that run well and safely here, then this organization's own " +
+			"rules and preferences, which win where the two differ. Read them before writing or " +
+			"changing an app if the client did not load them when it connected. `text` is the whole " +
+			"document.",
+		Schema: schema(map[string]any{}),
+		request: func(map[string]any) (string, string, any, error) {
+			return "GET", "/instructions", nil, nil
+		},
+	},
+	{
 		Name: "pando_get_updates",
 		Description: "Whether a newer Pando is released: the version the server runs, the latest on " +
 			"the update channel, and each version in between with its changelog, security fixes " +

@@ -1427,6 +1427,42 @@ Unlink a provider's identity from an account
 pando identity-provider unlink <user-id> <provider-id> <external-id>
 ```
 
+### `instructions`
+
+Read and set the instructions every agent is given
+
+```
+pando instructions
+```
+
+Agents connecting over MCP are given Pando's guidance for building apps here, then the
+company's own instructions, which win where the two differ.
+
+#### `instructions set`
+
+Replace the company's instructions with text read from stdin
+
+```
+pando instructions set
+```
+
+Reads the company's instructions as text on stdin, at most 32 KB, and replaces the current
+ones. Empty input clears them. Needs install.policy.manage.
+
+  pando instructions set < instructions.md
+
+#### `instructions show`
+
+Print the instructions agents are given
+
+```
+pando instructions show
+```
+
+| Flag | Default | What it does |
+| --- | --- | --- |
+| `--company` |  | print only the company's instructions |
+
 ### `join`
 
 Join a new Pando to a cluster with a join token

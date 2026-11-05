@@ -71,6 +71,7 @@ func Commands() []*cobra.Command {
 		withServer(exportCmd(client)),
 		withServer(backupCmd(client)),
 		withServer(policyCmd(client)),
+		withServer(instructionsCmd(client)),
 		withServer(tokenCmd(client)),
 		withServer(MCPCommand()),
 	}

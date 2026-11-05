@@ -52,6 +52,7 @@ import (
 	"github.com/trypando/pando/internal/core/idle"
 	"github.com/trypando/pando/internal/core/idp"
 	"github.com/trypando/pando/internal/core/imageregistry"
+	"github.com/trypando/pando/internal/core/instructions"
 	"github.com/trypando/pando/internal/core/logstream"
 	"github.com/trypando/pando/internal/core/notice"
 	"github.com/trypando/pando/internal/core/oauth"
@@ -421,6 +422,7 @@ func newInstallWith(t *testing.T, overlay *corepolicy.Overlay, startup *config.C
 	srv.Notices = &notice.Service{
 		Revisions: apps, Backups: srv.Backups, Security: srv.Security, Ignores: state.NewNoticeIgnores(db),
 	}
+	srv.Instructions = &instructions.Service{Store: state.NewAgentInstructions(db)}
 	srv.Subscriptions = &subscription.Service{
 		Subscriptions: state.NewSubscriptions(db),
 		Deliveries:    state.NewDeliveries(db),

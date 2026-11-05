@@ -218,6 +218,7 @@ var classes = map[string]Mapping{
 	"identity_provider.test":             apiRead,
 	"identity_provider.update":           apiUpdate,
 	"install.restart":                    apiOther,
+	"instructions.update":                apiUpdate,
 	"launcher.section.create":            apiCreate,
 	"launcher.section.delete":            apiDelete,
 	"launcher.section.place":             apiUpdate,

@@ -8278,6 +8278,72 @@
         "x-pando-verb": "install.adapters.manage"
       }
     },
+    "/api/v1/instructions": {
+      "get": {
+        "operationId": "getInstructions",
+        "summary": "Get the instructions for agents",
+        "description": "What every agent building on this installation is told: `text`, the whole document MCP sends in its initialize answer; `builtin`, Pando's own guidance for this release; `company`, what administrators wrote, empty when nothing is; and who saved it last (`updated_by`, `updated_at`). Anyone signed in can read it.",
+        "tags": [
+          "Installation"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InstructionsDocument"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "put": {
+        "operationId": "putInstructions",
+        "summary": "Set instructions for agents",
+        "description": "Replace the company's part with `company`, at most 32 KB of text; an empty string clears it. Agents get it after Pando's guidance, under a heading saying it wins where the two differ, from the next time they connect.\n\nNeeds `install.policy.manage`.",
+        "tags": [
+          "Installation"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "company": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InstructionsDocument"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-pando-verb": "install.policy.manage"
+      }
+    },
     "/api/v1/mcp": {
       "post": {
         "operationId": "mcp",
@@ -16544,6 +16610,33 @@
         },
         "required": [
           "kind"
+        ]
+      },
+      "InstructionsDocument": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          },
+          "builtin": {
+            "type": "string"
+          },
+          "company": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_by": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "builtin",
+          "company",
+          "updated_by"
         ]
       },
       "JoinToken": {

@@ -81,6 +81,7 @@ import (
 	"github.com/trypando/pando/internal/core/hosts"
 	"github.com/trypando/pando/internal/core/idp"
 	"github.com/trypando/pando/internal/core/imageregistry"
+	"github.com/trypando/pando/internal/core/instructions"
 	"github.com/trypando/pando/internal/core/logstream"
 	"github.com/trypando/pando/internal/core/notice"
 	"github.com/trypando/pando/internal/core/notifyconn"
@@ -1192,8 +1193,10 @@ func serve(ctx context.Context, configPath string) error {
 			Ignores: state.NewNoticeIgnores(db), Standbys: standbys,
 			Rooms: standbyService, // R-422: no room for a standby is a notice, never a blocker
 		},
-		Notifier: notifyRouter,
-		Logs:     logStore,
+		// What every agent is told when it connects over MCP (R-424).
+		Instructions: &instructions.Service{Store: state.NewAgentInstructions(db)},
+		Notifier:     notifyRouter,
+		Logs:         logStore,
 		LogOwner: cluster.LogOwner{
 			Self: member.ID, Deployments: deployments, Replicas: replicas,
 		}.Where,

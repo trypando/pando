@@ -38,6 +38,12 @@ func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	srv := &mcp.Server{Version: s.Version, Call: s.mcpCall(mcpRoot(r.Context()), r)}
+	if s.Instructions != nil {
+		// What every agent is told (R-424), in initialize's answer. Read
+		// here rather than through the API: it is not a tool, and the caller
+		// is already known to be signed in.
+		srv.Instructions = s.Instructions.Text
+	}
 	srv.ServeHTTP(w, r)
 }
 
