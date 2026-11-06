@@ -43,14 +43,16 @@ func TestR432_RoutesAreListedAndRemovedFromTheCLI(t *testing.T) {
 // TestR432_ARefusalFromTheAPIIsTheCLIsError asserts each command says so, rather
 // than printing a secret or "Saved." it did not get.
 func TestR432_ARefusalFromTheAPIIsTheCLIsError(t *testing.T) {
-	for _, args := range [][]string{
-		{"list", "app_1"},
-		{"add", "app_1", "noodle", "/hook", "--header", "X-Sig"},
-		{"remove", "app_1", "noodle"},
-		{"secret", "app_1", "noodle"},
+	refused := map[string]any{"code": "VALID_INVALID", "message": "No."}
+	for key, args := range map[string][]string{
+		"GET /apps/app_1/webhook-routes":                {"list", "app_1"},
+		"POST /apps/app_1/webhook-routes":               {"add", "app_1", "noodle", "/hook", "--header", "X-Sig"},
+		"DELETE /apps/app_1/webhook-routes/noodle":      {"remove", "app_1", "noodle"},
+		"POST /apps/app_1/webhook-routes/noodle/secret": {"secret", "app_1", "noodle"},
 	} {
-		got := run(t, newAPI(t), "", "app", append([]string{"webhook-route"}, args...)...)
-		require.Error(t, got.err, args[0])
+		api := newAPI(t).fail(key, 400, refused)
+		got := run(t, api, "", "app", append([]string{"webhook-route"}, args...)...)
+		require.Error(t, got.err, key)
 		require.NotContains(t, got.out, "Secret:")
 	}
 }
