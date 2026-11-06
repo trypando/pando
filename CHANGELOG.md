@@ -19,6 +19,13 @@ Unreleased above it. -->
 
 ## [Unreleased]
 
+### Security
+
+- Update `klauspost/compress` to 1.20.3, fixing a panic on two-block frames
+  ([GHSA-fpmh-frq8-7rj8](https://github.com/advisories/GHSA-fpmh-frq8-7rj8), CVE-2026-116591).
+- Update `crewjam/saml` to 0.5.2, fixing `NameID` spoofing from a foreign XML namespace in a signed
+  assertion (GO-2026-6909).
+
 ### Added
 
 - Webhook routes let a private app receive webhooks (R-425 – R-433). A route names one method and exact
