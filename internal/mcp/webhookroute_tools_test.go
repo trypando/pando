@@ -47,8 +47,16 @@ func TestR432_TheWebhookRouteToolsAreTheAPIsCalls(t *testing.T) {
 	s.run(t, srv, call(1, "pando_set_webhook_route_secret", `{"app_id":"app_1","name":"noodle","secret":"whsec_from_provider_1"}`))
 	require.NotNil(t, s.calls[0].body)
 
-	srv, s = newSession()
-	replies = s.run(t, srv, call(1, "pando_remove_webhook_route", `{"app_id":"app_1"}`))
-	require.True(t, result(t, replies[0])["isError"].(bool))
-	require.Empty(t, s.calls)
+	for _, bad := range []struct{ tool, args string }{
+		{"pando_remove_webhook_route", `{"app_id":"app_1"}`},
+		{"pando_remove_webhook_route", `{"name":"noodle"}`},
+		{"pando_add_webhook_route", `{"name":"noodle"}`},
+		{"pando_set_webhook_route_secret", `{"app_id":"app_1"}`},
+		{"pando_set_webhook_route_secret", `{"app_id":"app_1","name":"noodle","secret":7}`},
+	} {
+		srv, s = newSession()
+		replies = s.run(t, srv, call(1, bad.tool, bad.args))
+		require.True(t, result(t, replies[0])["isError"].(bool), bad.args)
+		require.Empty(t, s.calls)
+	}
 }

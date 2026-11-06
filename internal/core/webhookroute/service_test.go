@@ -246,3 +246,80 @@ func TestAFailedReadIsReturned(t *testing.T) {
 	_, err = s.SetSecret(context.Background(), who, app, "noodle", "")
 	require.Error(t, err)
 }
+
+// failing fails each write after the route is validated.
+type failing struct {
+	secrets
+	put, names, del error
+}
+
+func (f failing) Put(ctx context.Context, appID, route string, v secret.Value) error {
+	if f.put != nil {
+		return f.put
+	}
+	return f.secrets.Put(ctx, appID, route, v)
+}
+
+func (f failing) Names(ctx context.Context, appID string) (map[string]bool, error) {
+	if f.names != nil {
+		return nil, f.names
+	}
+	return f.secrets.Names(ctx, appID)
+}
+
+func (f failing) Delete(ctx context.Context, appID, route string) error {
+	if f.del != nil {
+		return f.del
+	}
+	return f.secrets.Delete(ctx, appID, route)
+}
+
+type noRevision struct{ *revisions }
+
+func (noRevision) CreateRevision(context.Context, string, *spec.AppSpec, spec.Origin, string) (state.Revision, error) {
+	return state.Revision{}, errors.New("database gone")
+}
+
+// TestR427_AFailedWriteIsReturned asserts each store's failure reaches the
+// caller rather than a route saved without its secret.
+func TestR427_AFailedWriteIsReturned(t *testing.T) {
+	gone := errors.New("database gone")
+	ctx := context.Background()
+
+	s, revs, keys, _ := service()
+	s.Secrets = failing{secrets: keys, put: gone}
+	_, err := s.Add(ctx, who, app, route(), "")
+	require.ErrorIs(t, err, gone)
+	require.Empty(t, revs.created, "no route without its secret")
+
+	s, revs, _, _ = service()
+	_, err = s.Add(ctx, who, app, route(), "")
+	require.NoError(t, err)
+	s.Secrets = failing{secrets: secrets{}, put: gone}
+	_, err = s.SetSecret(ctx, who, app, "noodle", "")
+	require.ErrorIs(t, err, gone)
+	s.Secrets = failing{secrets: secrets{}, names: gone}
+	_, err = s.List(ctx, app)
+	require.ErrorIs(t, err, gone)
+	s.Secrets = failing{secrets: secrets{}, del: gone}
+	_, err = s.Remove(ctx, who, app, "noodle")
+	require.ErrorIs(t, err, gone)
+
+	s.Apps = noRevision{revs}
+	_, err = s.Remove(ctx, who, app, "noodle")
+	require.Error(t, err)
+	other := route()
+	other.Name, other.Path = "other", "/other"
+	_, err = s.Add(ctx, who, app, other, "whsec_the-providers-own-secret")
+	require.Error(t, err)
+
+	_, err = s.Add(ctx, who, app, other, "short")
+	require.Equal(t, errs.ValidInvalid, errs.CodeOf(err))
+}
+
+func TestWithNoAuditWriterAChangeStillSaves(t *testing.T) {
+	s, _, _, _ := service()
+	s.Audit = nil
+	_, err := s.Add(context.Background(), who, app, route(), "")
+	require.NoError(t, err)
+}

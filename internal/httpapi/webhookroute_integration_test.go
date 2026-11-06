@@ -62,11 +62,16 @@ func TestR432_WebhookRoutesAreManagedThroughTheAPI(t *testing.T) {
 	missing := i.do(admin, http.MethodPost, base+"/nothing/secret", nil)
 	require.Equal(t, http.StatusNotFound, missing.Code, missing.String())
 
+	duplicate := i.do(admin, http.MethodPost, base, noodleRoute())
+	require.Equal(t, http.StatusBadRequest, duplicate.Code, duplicate.String())
+
 	removed := i.do(admin, http.MethodDelete, base+"/noodle", nil)
 	require.Equal(t, http.StatusOK, removed.Code, removed.String())
 	listed = i.do(admin, http.MethodGet, base, nil)
 	listed.JSON(t, &view)
 	require.Empty(t, view.Routes)
+	again := i.do(admin, http.MethodDelete, base+"/noodle", nil)
+	require.Equal(t, http.StatusNotFound, again.Code, again.String())
 }
 
 // TestR432_RoutesNeedTheirVerbsAndGoodJSON asserts nobody without a credential

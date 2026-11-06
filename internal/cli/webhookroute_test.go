@@ -39,3 +39,18 @@ func TestR432_RoutesAreListedAndRemovedFromTheCLI(t *testing.T) {
 	require.Contains(t, run(t, api, "", "app", "webhook-route", "list", "app_1").out, "noodle")
 	require.Contains(t, run(t, api, "", "app", "webhook-route", "remove", "app_1", "noodle").out, "Removed.")
 }
+
+// TestR432_ARefusalFromTheAPIIsTheCLIsError asserts each command says so, rather
+// than printing a secret or "Saved." it did not get.
+func TestR432_ARefusalFromTheAPIIsTheCLIsError(t *testing.T) {
+	for _, args := range [][]string{
+		{"list", "app_1"},
+		{"add", "app_1", "noodle", "/hook", "--header", "X-Sig"},
+		{"remove", "app_1", "noodle"},
+		{"secret", "app_1", "noodle"},
+	} {
+		got := run(t, newAPI(t), "", "app", append([]string{"webhook-route"}, args...)...)
+		require.Error(t, got.err, args[0])
+		require.NotContains(t, got.out, "Secret:")
+	}
+}

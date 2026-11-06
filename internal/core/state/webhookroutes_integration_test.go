@@ -4,6 +4,7 @@ package state_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -120,4 +121,51 @@ func TestR427_ARouteSecretIsKeptSealedPerRoute(t *testing.T) {
 	_, found, err = k.Get(ctx, appID, "noodle")
 	require.NoError(t, err)
 	require.False(t, found)
+}
+
+type brokenSecrets struct{ api.SecretsAdapter }
+
+func (brokenSecrets) Put(context.Context, api.SecretRef, secret.Value) (api.StoredRef, error) {
+	return api.StoredRef{}, errors.New("vault gone")
+}
+
+func (brokenSecrets) Get(context.Context, api.StoredRef) (secret.Value, error) {
+	return secret.Value{}, errors.New("vault gone")
+}
+
+// TestR427_AFailedStoreIsReported asserts every read and write says it failed,
+// so the proxy refuses a delivery rather than treating an error as no record.
+func TestR427_AFailedStoreIsReported(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	db := connected(t)
+	appID := webhookApp(ctx, t, db)
+
+	var none *state.WebhookRouteSecrets
+	require.Error(t, none.Put(ctx, appID, "noodle", secret.New("x")), "no adapter to seal it with")
+
+	broken := state.NewWebhookRouteSecrets(db, brokenSecrets{}, "sec_local")
+	require.Error(t, broken.Put(ctx, appID, "noodle", secret.New("x")))
+	require.NoError(t, state.NewWebhookRouteSecrets(db, sealing{}, "sec_local").Put(ctx, appID, "noodle", secret.New("x")))
+	_, _, err := broken.Get(ctx, appID, "noodle")
+	require.Error(t, err)
+	_, _, err = state.NewWebhookRouteSecrets(db, nil, "").Get(ctx, appID, "noodle")
+	require.Error(t, err, "a stored secret and nothing to open it")
+
+	gone, cancel := context.WithCancel(ctx)
+	cancel()
+	k := state.NewWebhookRouteSecrets(db, sealing{}, "sec_local")
+	require.Error(t, k.Put(gone, appID, "noodle", secret.New("x")))
+	_, _, err = k.Get(gone, appID, "noodle")
+	require.Error(t, err)
+	_, err = k.Names(gone, appID)
+	require.Error(t, err)
+	require.Error(t, k.Delete(gone, appID, "noodle"))
+
+	d := state.NewWebhookDeliveries(db)
+	now := time.Now()
+	_, err = d.Claim(gone, appID, "noodle", []byte("d"), now, now)
+	require.Error(t, err)
+	require.Error(t, d.Accept(gone, appID, "noodle", []byte("d"), now))
+	require.Error(t, d.Release(gone, appID, "noodle", []byte("d")))
 }

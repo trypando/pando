@@ -458,4 +458,10 @@ func TestR431_WebhookRoutesAreOnUnlessPolicyTurnsThemOff(t *testing.T) {
 	err := off.AllowsWebhookRoutes(ctx(), routed)
 	require.Equal(t, errs.PlanWebhookRoutesDisabled, errs.CodeOf(err))
 	require.NotEmpty(t, errs.As(err).Remedy)
+
+	unreadable := policy.New(func(context.Context) (policy.Document, error) {
+		return policy.Document{}, errors.New("database gone")
+	})
+	require.True(t, unreadable.WebhookRoutesDisabled(ctx()))
+	require.Error(t, unreadable.AllowsWebhookRoutes(ctx(), routed))
 }

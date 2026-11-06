@@ -40,11 +40,13 @@ type hookStore struct {
 	secrets  map[string]string
 	seen     map[string]state.WebhookClaim
 	claimErr error
+
+	secretErr, settleErr error
 }
 
-func (h *hookStore) Secret(_ context.Context, _, route string) (secret.Value, bool, error) {
+func (h *hookStore) Get(_ context.Context, _, route string) (secret.Value, bool, error) {
 	key, ok := h.secrets[route]
-	return secret.New(key), ok, nil
+	return secret.New(key), ok, h.secretErr
 }
 
 func (h *hookStore) Claim(_ context.Context, _, route string, digest []byte, _, _ time.Time) (state.WebhookClaim, error) {
@@ -65,7 +67,7 @@ func (h *hookStore) Accept(_ context.Context, _, route string, digest []byte, _ 
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.seen[route+string(digest)] = state.WebhookAccepted
-	return nil
+	return h.settleErr
 }
 
 func (h *hookStore) Release(_ context.Context, _, route string, digest []byte) error {
@@ -83,13 +85,14 @@ func (p hookPolicy) AuditsAnonymousDenials(context.Context) bool { return !p.qui
 type hookAudit struct {
 	mu     sync.Mutex
 	events []audit.Event
+	err    error
 }
 
 func (a *hookAudit) Write(_ context.Context, e audit.Event) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.events = append(a.events, e)
-	return nil
+	return a.err
 }
 
 func (a *hookAudit) actions() []string {
@@ -538,4 +541,51 @@ func TestR433_AStoppedAppLeavesNoClaim(t *testing.T) {
 	r.app.State = state.StateStopped
 	require.Equal(t, http.StatusServiceUnavailable, app.deliver(hookBody).Code)
 	require.Empty(t, app.store.seen)
+}
+
+// TestR430_ASecretThatCannotBeReadRefusesTheDelivery asserts a failure to read
+// fails closed: nothing reaches the app, and the answer names nothing.
+func TestR430_ASecretThatCannotBeReadRefusesTheDelivery(t *testing.T) {
+	app := newHookApp(t, authz.Anonymous(), hmacRoute())
+	app.store.secretErr = errors.New("database gone")
+	rec := app.deliver(hookBody)
+	require.Equal(t, http.StatusInternalServerError, rec.Code)
+	require.NotContains(t, rec.Body.String(), "database")
+	require.Zero(t, app.forwarded())
+}
+
+type brokenBody struct{}
+
+func (brokenBody) Read([]byte) (int, error) { return 0, errors.New("connection reset") }
+
+// TestR428_ABodyThatStopsArrivingIsRefused asserts a read that fails is refused,
+// and an empty body is verified as what it is.
+func TestR428_ABodyThatStopsArrivingIsRefused(t *testing.T) {
+	app := newHookApp(t, authz.Anonymous(), hmacRoute())
+	req := httptest.NewRequest(http.MethodPost, "http://notes.test"+hookPath, brokenBody{})
+	req.Header.Set(hookHeader, sign(hookBody))
+	rec := httptest.NewRecorder()
+	app.proxy.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusRequestTimeout, rec.Code)
+	require.Zero(t, app.forwarded())
+
+	req = httptest.NewRequest(http.MethodPost, "http://notes.test"+hookPath, nil)
+	req.Body = nil
+	req.Header.Set(hookHeader, sign(""))
+	rec = httptest.NewRecorder()
+	app.proxy.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+}
+
+// TestR428_AnAuditOrSettleFailureDoesNotChangeTheAnswer asserts what the app
+// answered stands when recording it fails.
+func TestR428_AnAuditOrSettleFailureDoesNotChangeTheAnswer(t *testing.T) {
+	app := newHookApp(t, authz.Anonymous(), hmacRoute())
+	app.audit.err = errors.New("audit gone")
+	app.store.settleErr = errors.New("database gone")
+	require.Equal(t, http.StatusOK, app.deliver(hookBody).Code)
+	require.Equal(t, http.StatusUnauthorized, app.send(http.MethodPost, hookPath, hookBody, nil).Code)
+
+	app.proxy.Auditor = nil
+	require.Equal(t, http.StatusUnauthorized, app.send(http.MethodPost, hookPath, hookBody, nil).Code)
 }

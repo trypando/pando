@@ -54,7 +54,7 @@ const (
 
 // WebhookStore holds routes' secrets and the signatures seen on them.
 type WebhookStore interface {
-	Secret(ctx context.Context, appID, route string) (secret.Value, bool, error)
+	Get(ctx context.Context, appID, route string) (secret.Value, bool, error)
 	Claim(ctx context.Context, appID, route string, digest []byte, now, expires time.Time) (state.WebhookClaim, error)
 	Accept(ctx context.Context, appID, route string, digest []byte, expires time.Time) error
 	Release(ctx context.Context, appID, route string, digest []byte) error
@@ -111,7 +111,7 @@ func (p *Proxy) verifyWebhook(w http.ResponseWriter, r *http.Request, route spec
 		return nil, false
 	}
 
-	key, found, err := p.Webhooks.Secret(r.Context(), appID, route.Name)
+	key, found, err := p.Webhooks.Get(r.Context(), appID, route.Name)
 	if err != nil {
 		log.From(r.Context()).Error("could not read a webhook route's secret", zap.Error(err))
 		p.countRefused(r, appID)
