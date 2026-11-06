@@ -8,7 +8,7 @@ Two planes, evaluated separately, never conflated. This is the most security-sen
 
 ```go
 type Principal struct {
-    Kind        PrincipalKind  // user | token | anonymous | system
+    Kind        PrincipalKind  // user | token | anonymous | system | webhook
     ID          string
     UserID      string   // delegated token: the owner (R-059). Same as ID for users.
     TokenID     string
@@ -547,6 +547,7 @@ The single enforcement point (R-023). One path for every request to every app �
 1.  Resolve app from hostname, port, or path prefix  → 404
 3.  Extract session cookie (ses_<id>.<secret>, matched by digest), or a bearer token shaped like Pando's (tok_…)
 4.  Authenticate → Principal, or anonymous
+4a. Anonymous and matches a webhook route? Verify → webhook principal, or 401 (§4.3)
 5.  CheckData(principal, app)
       passcode required   → redirect to the passcode page (R-075a)
       denied + anonymous  → redirect to login
@@ -559,6 +560,7 @@ The single enforcement point (R-023). One path for every request to every app �
 8.  Set assertion + convenience headers
 9.  Strip path prefix, set X-Forwarded-Prefix (R-167)
 10. Strip every cookie in Pando's namespace, and a Pando API token (R-173)  ← credentials; see below
+10a. HMAC webhook delivery: claim its signature, or answer 200 if already accepted (§4.3)
 11. Forward to the workload
 12. Stream response
 ```
@@ -760,6 +762,38 @@ hijack hands the connection to the websocket loop above and stops the timer.
 response's headers — 103 Early Hints — straight to the client, before the response filter that strips
 `Set-Cookie` from every final response. The proxy's writer drops every header but `Link`, the one a 1xx
 is sent for.
+
+### 4.3 Webhook routes (R-425, issue #377)
+
+**[D] A route is a way to authenticate, not a way around the proxy.** Step 4a runs only for a request
+step 4 left anonymous. On a match it verifies the sender and produces a `webhook` principal naming the
+app and the route, and the request carries on through step 5 and everything after it. A request that
+fails is answered 401 there. No other step is skipped, so R-023 holds.
+
+**[D] `CheckData` gains no path.** It still takes a principal and an app. The path is decided in step
+4a, and a `webhook` principal exists only for the request that matched, so `CheckData` allows one when
+it names this app. It holds no grant, and no control-plane check accepts one (R-070, R-429).
+
+**[D] An HMAC route buffers; a header route does not.** The signature covers the whole body, so nothing
+can be forwarded until it is checked. Step 4a reads the body under R-428's limits and replays it to the
+workload. A header route is decided from the headers and streams as §4.2 describes.
+
+**[D] Step 4a takes step 5b's limit first.** A delivery is charged to the anonymous bucket before its
+body is read or its secret checked, and is not charged again at 5b. Otherwise a flood would make Pando
+buffer a body per request, and guessing a secret would have no limit. A refusal is audited under `disable_anonymous_denial_audit`'s rule
+(§6): an unverified sender is a visitor who is not signed in.
+
+**[D] A replay is found by its signature (R-433).** Providers name a delivery in different headers, and
+none of those headers is signed, so an attacker could change one. The signature needs no configuration
+and cannot be altered without the secret. Step 10a claims it by inserting a row into
+`webhook_deliveries`, which also settles two copies arriving at once on different replicas. The claim
+runs after step 2, so a stopped app's 503 leaves nothing behind. A 2xx from the app makes the claim last
+for the window. Any other answer, or a lost connection, deletes it so the provider's retry is forwarded.
+A claim left by a replica that died expires on its own after [P: 5 minutes]. Only verified deliveries
+write a row, so a flood of bad signatures costs no writes.
+
+**[D] Matching uses the request's path before any cleaning.** `..`, an empty segment and an encoded
+slash match no route (R-425), so `/api/v1/webhook/noodle/../admin` is an ordinary anonymous request.
 
 ---
 

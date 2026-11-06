@@ -237,6 +237,14 @@ POST /api/v1/apps/{id}/grants
 
 **[D]** The anonymous grant is the same endpoint, not a special toggle (R-075). Host policy may reject it with `POLICY_ANONYMOUS_GRANT_FORBIDDEN` (R-076). The console renders this grant with the R-077 wording — *anyone on the internet, without signing in* — never the word "public" alone.
 
+**Webhook routes (R-425, R-432, issue #377).** A route is in the spec, so adding or removing one goes
+through the spec like any other change. These two calls cover the secret, which the spec does not hold:
+
+```
+POST /apps/{id}/webhook-routes/{name}/secret    generate one, or body {"secret": "…"} to set one supplied
+DELETE /apps/{id}/webhook-routes/{name}/secret  remove it; the route refuses every delivery until it has one
+```
+
 ### 2.6 Runtime access
 
 ```
