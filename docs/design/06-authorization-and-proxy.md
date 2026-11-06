@@ -792,6 +792,18 @@ for the window. Any other answer, or a lost connection, deletes it so the provid
 A claim left by a replica that died expires on its own after [P: 5 minutes]. Only verified deliveries
 write a row, so a flood of bad signatures costs no writes.
 
+**[D] A delivery is not re-authorized while its response runs.** §4.2's re-check authenticates a
+request's credentials again, and a delivery has none, so it would be taken for anonymous and cut off. It
+skips the re-check. That is safe because a delivery is one request: a request asking to upgrade matches
+no route, so nothing verified here can become a connection.
+
+**[D] `audit_events` has no `webhook` kind.** A delivery is written as `anonymous` with
+`webhook:<route name>` as `principal_id`. That table's CHECK is on every monthly partition, and
+`anonymous` is true of the sender.
+
+**[D] The signature's digest is taken after decoding,** so changing the case of the hex does not make a
+replay look like a new delivery.
+
 **[D] Matching uses the request's path before any cleaning.** `..`, an empty segment and an encoded
 slash match no route (R-425), so `/api/v1/webhook/noodle/../admin` is an ordinary anonymous request.
 

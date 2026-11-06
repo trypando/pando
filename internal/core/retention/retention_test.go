@@ -71,6 +71,10 @@ func (f *fakeStore) Sessions(_ context.Context, before time.Time, limit int) (in
 func (f *fakeStore) Notifications(_ context.Context, now time.Time, limit int) (int64, error) {
 	return f.next("notifications", now, limit)
 }
+func (f *fakeStore) WebhookDeliveries(context.Context, time.Time, int) (int64, error) {
+	return 0, nil
+}
+
 func (f *fakeStore) IdempotencyKeys(_ context.Context, before time.Time, limit int) (int64, error) {
 	return f.next("idempotency_keys", before, limit)
 }
@@ -106,7 +110,7 @@ func TestR224_RetentionDrainsABacklogABatchAtATimeWithItsDocumentedWindows(t *te
 	require.Equal(t, int64(1000), removed["events"])
 	require.Equal(t, int64(4), removed["sessions"])
 	require.Zero(t, removed["scans"])
-	require.Len(t, removed, 8, "every table, the outbox included")
+	require.Len(t, removed, 9, "every table, the outbox included")
 
 	day := 24 * time.Hour
 	require.Equal(t, 50, store.keep)

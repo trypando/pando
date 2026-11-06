@@ -41,6 +41,7 @@ import (
 	"github.com/trypando/pando/internal/core/auditstream"
 	"github.com/trypando/pando/internal/core/authz"
 	"github.com/trypando/pando/internal/core/autodeploy"
+	"github.com/trypando/pando/internal/core/webhookroute"
 	"github.com/trypando/pando/internal/core/backup"
 	"github.com/trypando/pando/internal/core/bootstrap"
 	"github.com/trypando/pando/internal/core/capacity"
@@ -380,6 +381,11 @@ func newInstallWith(t *testing.T, overlay *corepolicy.Overlay, startup *config.C
 		Checker: checked,
 		Audit:   httpapi.AuditFunc(auditor),
 		Logger:  logger,
+	}
+
+	srv.WebhookRoutes = &webhookroute.Service{
+		Apps: apps, Secrets: state.NewWebhookRouteSecrets(db, secretsAdapter, "sec_local"),
+		Policy: hostPolicy, Authz: authorizer, Audit: httpapi.AuditFunc(auditor),
 	}
 
 	// External identity, with the kinds main compiles in.

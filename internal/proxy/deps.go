@@ -5,12 +5,14 @@ import (
 	"strconv"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/trypando/pando/internal/adapter/api"
 	"github.com/trypando/pando/internal/core/authz"
 	"github.com/trypando/pando/internal/core/spec"
 	"github.com/trypando/pando/internal/core/state"
 	"github.com/trypando/pando/internal/errs"
+	"github.com/trypando/pando/internal/secret"
 )
 
 // StateResolver resolves apps from the state store.
@@ -183,4 +185,30 @@ func (r *StateResolver) IsAppHostname(ctx context.Context, hostname string) (boo
 	// cache the second is free.
 	_, _, found, err := r.ByHostname(ctx, hostname)
 	return found, err
+}
+
+// StateWebhooks is a WebhookStore over the database (R-427, R-433).
+type StateWebhooks struct {
+	Secrets    *state.WebhookRouteSecrets
+	Deliveries *state.WebhookDeliveries
+}
+
+// Secret opens a route's secret.
+func (s StateWebhooks) Secret(ctx context.Context, appID, route string) (secret.Value, bool, error) {
+	return s.Secrets.Get(ctx, appID, route)
+}
+
+// Claim takes a signature for one delivery.
+func (s StateWebhooks) Claim(ctx context.Context, appID, route string, digest []byte, now, expires time.Time) (state.WebhookClaim, error) {
+	return s.Deliveries.Claim(ctx, appID, route, digest, now, expires)
+}
+
+// Accept keeps a claimed signature.
+func (s StateWebhooks) Accept(ctx context.Context, appID, route string, digest []byte, expires time.Time) error {
+	return s.Deliveries.Accept(ctx, appID, route, digest, expires)
+}
+
+// Release gives a claimed signature up.
+func (s StateWebhooks) Release(ctx context.Context, appID, route string, digest []byte) error {
+	return s.Deliveries.Release(ctx, appID, route, digest)
 }

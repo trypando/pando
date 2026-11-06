@@ -128,6 +128,11 @@ is encoded as 6003 API Activity, 99 Other.
 | `app.use` | 6004 Web Resource Access Activity | 1 Access Grant | 600401 |
 | `app.use.denied` | 6004 Web Resource Access Activity | 2 Access Deny | 600402 |
 | `app.volume.add` | 6003 API Activity | 1 Create | 600301 |
+| `app.webhook.refused` | 6004 Web Resource Access Activity | 2 Access Deny | 600402 |
+| `app.webhook.replayed` | 6004 Web Resource Access Activity | 2 Access Deny | 600402 |
+| `app.webhook_route.add` | 6003 API Activity | 3 Update | 600303 |
+| `app.webhook_route.remove` | 6003 API Activity | 3 Update | 600303 |
+| `app.webhook_route.secret` | 6003 API Activity | 3 Update | 600303 |
 | `audit.archive.download` | 6003 API Activity | 2 Read | 600302 |
 | `audit.archive.held` | 6003 API Activity | 99 Other | 600399 |
 | `audit.export` | 6003 API Activity | 2 Read | 600302 |

@@ -99,7 +99,7 @@ type View struct {
 // Get is an app's auto-deploy settings, last check and webhook.
 func (s *Service) Get(ctx context.Context, app state.App) (View, error) {
 	var v View
-	pinned, newest, err := s.revisions(ctx, app)
+	pinned, newest, err := s.Apps.PinnedAndNewest(ctx, app)
 	if err != nil {
 		return v, err
 	}
@@ -143,7 +143,7 @@ type Saved struct {
 // the same gate as any spec save, so a setting refused there is refused here
 // in the same words (R-158).
 func (s *Service) Set(ctx context.Context, p authz.Principal, app state.App, ad spec.AutoDeploy) (Saved, error) {
-	pinned, newest, err := s.revisions(ctx, app)
+	pinned, newest, err := s.Apps.PinnedAndNewest(ctx, app)
 	if err != nil {
 		return Saved{}, err
 	}
@@ -219,26 +219,6 @@ func (s *Service) RotateSecret(ctx context.Context, p authz.Principal, app state
 func (s *Service) RemoveSecret(ctx context.Context, p authz.Principal, app state.App) error {
 	s.audit(ctx, p, "app.auto_deploy.webhook_secret", app.ID, map[string]any{"change": "remove"})
 	return s.Secrets.Delete(ctx, app.ID)
-}
-
-// revisions are the app's pinned revision and its newest, either zero when
-// there is none.
-func (s *Service) revisions(ctx context.Context, app state.App) (pinned, newest state.Revision, err error) {
-	if app.PinnedSpecID != "" {
-		if pinned, _, err = s.Apps.RevisionByID(ctx, app.PinnedSpecID); err != nil {
-			return
-		}
-	}
-	newest = pinned
-	list, err := s.Apps.ListRevisions(ctx, app.ID)
-	if err != nil || len(list) == 0 || list[0].ID == pinned.ID || list[0].Revision < pinned.Revision {
-		return
-	}
-	latest, found, err := s.Apps.RevisionByID(ctx, list[0].ID)
-	if err == nil && found {
-		newest = latest
-	}
-	return
 }
 
 func (s *Service) audit(ctx context.Context, p authz.Principal, action, appID string, detail map[string]any) {

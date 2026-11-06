@@ -54,6 +54,7 @@ import (
 	"github.com/trypando/pando/internal/core/twofactor"
 	"github.com/trypando/pando/internal/core/update"
 	"github.com/trypando/pando/internal/core/upgrade"
+	"github.com/trypando/pando/internal/core/webhookroute"
 	"github.com/trypando/pando/internal/errs"
 	"github.com/trypando/pando/internal/log"
 	"github.com/trypando/pando/internal/mcp"
@@ -180,6 +181,9 @@ type Server struct {
 	// AutoDeploy reads and changes automatic deploy settings and takes the
 	// webhooks git hosts send (R-141, R-142).
 	AutoDeploy *autodeploy.Service
+
+	// WebhookRoutes reads and changes an app's webhook routes (R-432).
+	WebhookRoutes *webhookroute.Service
 
 	// Subscriptions manages event subscriptions and notification
 	// preferences (issue #50). Nil answers that they are unavailable.
@@ -1080,6 +1084,15 @@ func (s *Server) Routes() http.Handler {
 					r.Post("/webhook-secret", s.handleRotateWebhookSecret)
 					r.Delete("/webhook-secret", s.handleRemoveWebhookSecret)
 					r.Post("/webhook", s.handleAutoDeployWebhook)
+				})
+
+				// Webhook routes (R-432). A route is in the spec, so app.spec.edit;
+				// its secret is not, so app.secrets.write.
+				r.Route("/webhook-routes", func(r chi.Router) {
+					r.Get("/", s.handleListWebhookRoutes)
+					r.Post("/", s.handleAddWebhookRoute)
+					r.Delete("/{name}", s.handleRemoveWebhookRoute)
+					r.Post("/{name}/secret", s.handleSetWebhookRouteSecret)
 				})
 
 				r.Route("/specs", func(r chi.Router) {

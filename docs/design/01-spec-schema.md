@@ -423,17 +423,19 @@ type WebhookRoute struct {
     Path   string `json:"path"`   // exact, as the app receives it
 
     Verification WebhookVerification `json:"verification"`
+    AllowRepeats bool                `json:"allow_repeats,omitempty"` // hmac_sha256 only: no replay check (R-433)
 }
 
 type WebhookVerification struct {
-    Kind      string `json:"kind"`             // hmac_sha256 | header (R-426)
-    Header    string `json:"header"`           // e.g. X-Hub-Signature-256
-    Prefix    string `json:"prefix,omitempty"` // hmac_sha256 only, e.g. sha256=
-    SecretRef string `json:"secret_ref"`       // a reference; never the value (R-427)
-
-    AllowRepeats bool `json:"allow_repeats,omitempty"` // hmac_sha256 only: no replay check (R-433)
+    Kind   string `json:"kind"`             // hmac_sha256 | header (R-426)
+    Header string `json:"header"`           // e.g. X-Hub-Signature-256
+    Prefix string `json:"prefix,omitempty"` // hmac_sha256 only, e.g. sha256=
 }
 ```
+
+**[D]** The secret is not in the spec, and the spec needs no reference to it: it is keyed by the app and
+the route's name (`webhook_route_secrets`, R-427). A route that arrives by a spec save has no secret and
+refuses every delivery until it is given one. Routes carry across a re-detection (`spec.Carry`).
 
 **[D]** Under path routing, `Path` is the path after the prefix is stripped (R-167), so a route does not
 change when the app's address does.
@@ -582,7 +584,8 @@ install's rules, which a diff of two specs cannot see; the verb and policy gates
 the control (R-183, R-184). A change to `Deploy.RequireApproval` is `benign`.
 
 **[P]** A webhook route change is `destructive` because of what it does to access: adding one lets
-requests into a private app, and removing one stops a sender. It needs no restart or build.
+requests into a private app, and removing one stops a sender. Like any spec change it takes effect at
+the app's next deploy, except that removing a route through the API removes its secret at once (R-427).
 
 **[D]** Re-detection (R-022) presents this diff. So does promoting a compose service to Pando-managed (R-100). Same machinery.
 

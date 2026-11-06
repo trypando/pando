@@ -118,6 +118,44 @@ func appRequest(method, suffix string) func(args map[string]any) (string, string
 	}
 }
 
+// webhookRouteArgs is the app and route a webhook route tool names.
+func webhookRouteArgs(args map[string]any) (string, string, error) {
+	id, err := stringArg(args, "app_id", true)
+	if err != nil {
+		return "", "", err
+	}
+	name, err := stringArg(args, "name", true)
+	if err != nil {
+		return "", "", err
+	}
+	return id, url.PathEscape(name), nil
+}
+
+// addWebhookRouteRequest is POST .../webhook-routes, with the verification
+// flattened into the tool's arguments.
+func addWebhookRouteRequest(args map[string]any) (string, string, any, error) {
+	id, err := stringArg(args, "app_id", true)
+	if err != nil {
+		return "", "", nil, err
+	}
+	values := map[string]string{}
+	for key, required := range map[string]bool{
+		"name": true, "method": true, "path": true, "kind": true, "header": true, "prefix": false, "secret": false,
+	} {
+		if values[key], err = stringArg(args, key, required); err != nil {
+			return "", "", nil, err
+		}
+	}
+	repeats, _ := args["allow_repeats"].(bool)
+	return "POST", appPath(id, "/webhook-routes"), map[string]any{
+		"name": values["name"], "method": values["method"], "path": values["path"],
+		"verification": map[string]any{
+			"kind": values["kind"], "header": values["header"], "prefix": values["prefix"],
+		},
+		"allow_repeats": repeats, "secret": values["secret"],
+	}, nil
+}
+
 // decisionRequest is approving or rejecting a deploy waiting for approval
 // (R-154): POST .../deployments/{id}/<action>, with an optional comment.
 func decisionRequest(action string) func(args map[string]any) (string, string, any, error) {
@@ -1000,6 +1038,76 @@ var toolList = []tool{
 		Description: "Remove an image app's registry credential, so its image is pulled anonymously.",
 		Schema:      appIDSchema(),
 		request:     appRequest("DELETE", "/registry-credential"),
+	},
+	{
+		Name: "pando_list_webhook_routes",
+		Description: "The webhook routes on an app's newest configuration: each one's name, method, path and " +
+			"verification, `secret_set`, without which it refuses every delivery, and `deployed`, whether the " +
+			"app runs it as it stands.",
+		Schema:  appIDSchema(),
+		request: appRequest("GET", "/webhook-routes"),
+	},
+	{
+		Name: "pando_add_webhook_route",
+		Description: "Let a verified delivery with no Pando credential reach one method and exact path of an " +
+			"app, which otherwise stays private. With kind hmac_sha256, `header` holds the hex HMAC-SHA256 of " +
+			"the body after any `prefix`, and a signature already accepted is not forwarded again unless " +
+			"allow_repeats is set. With kind header, `header` holds the secret itself. Without `secret`, one is " +
+			"generated and returned this once. Saved as a new configuration that takes effect at the app's " +
+			"next deploy.",
+		Schema: schema(map[string]any{
+			"app_id":        str(appIDDescription),
+			"name":          str("The route's name: lowercase letters, digits and hyphens, such as noodle."),
+			"method":        map[string]any{"type": "string", "enum": []string{"POST", "PUT", "PATCH"}},
+			"path":          str("The exact path the app receives, such as /api/v1/webhook/noodle."),
+			"kind":          map[string]any{"type": "string", "enum": []string{"hmac_sha256", "header"}},
+			"header":        str("The header holding the signature or the secret, such as X-Hub-Signature-256."),
+			"prefix":        str("With hmac_sha256: what comes before the signature, such as sha256=."),
+			"allow_repeats": map[string]any{"type": "boolean", "description": "With hmac_sha256: turn the replay check off, for a sender that repeats identical bodies."},
+			"secret":        str("The secret the provider issued. Left out, one is generated."),
+		}, "app_id", "name", "method", "path", "kind", "header"),
+		request: addWebhookRouteRequest,
+	},
+	{
+		Name: "pando_remove_webhook_route",
+		Description: "Remove a webhook route. Its secret goes at once, so deliveries are refused from now on, " +
+			"and the route leaves the configuration at the app's next deploy.",
+		Schema: schema(map[string]any{
+			"app_id": str(appIDDescription),
+			"name":   str("The route's name."),
+		}, "app_id", "name"),
+		request: func(args map[string]any) (string, string, any, error) {
+			id, name, err := webhookRouteArgs(args)
+			if err != nil {
+				return "", "", nil, err
+			}
+			return "DELETE", appPath(id, "/webhook-routes/"+name), nil, nil
+		},
+	},
+	{
+		Name: "pando_set_webhook_route_secret",
+		Description: "Replace a webhook route's secret. The old one stops working at once. Without `secret`, " +
+			"one is generated and returned this once.",
+		Schema: schema(map[string]any{
+			"app_id": str(appIDDescription),
+			"name":   str("The route's name."),
+			"secret": str("The secret the provider issued. Left out, one is generated."),
+		}, "app_id", "name"),
+		request: func(args map[string]any) (string, string, any, error) {
+			id, name, err := webhookRouteArgs(args)
+			if err != nil {
+				return "", "", nil, err
+			}
+			key, err := stringArg(args, "secret", false)
+			if err != nil {
+				return "", "", nil, err
+			}
+			var body any
+			if key != "" {
+				body = map[string]any{"secret": key}
+			}
+			return "POST", appPath(id, "/webhook-routes/"+name+"/secret"), body, nil
+		},
 	},
 	{
 		Name: "pando_get_auto_deploy",

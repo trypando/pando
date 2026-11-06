@@ -135,6 +135,14 @@ type Proxy struct {
 	// it, which is the default.
 	UsePolicy UsePolicy
 
+	// Webhooks holds routes' secrets and signatures (R-425). Nil turns routes
+	// off, so a delivery meets the app's ordinary access.
+	Webhooks WebhookStore
+
+	// WebhookPolicy is what host policy says about routes (R-431). Nil allows
+	// them and audits refusals.
+	WebhookPolicy WebhookPolicy
+
 	// ExternalURL is how a browser reaches this installation, which decides
 	// whether the visit cookie is marked Secure — the same rule as the session
 	// cookie (O-19). Nil falls back to whether the request arrived over TLS.
@@ -211,6 +219,19 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		principal = authz.Anonymous()
 	}
+
+	// 4a. No credential: this may be a webhook delivery (R-425, webhook.go).
+	var delivery *webhookDelivery
+	if principal.Kind == authz.KindAnonymous {
+		if route, matched := p.webhookRoute(r, appSpec, prefix); matched {
+			var verified bool
+			if delivery, verified = p.verifyWebhook(w, r, route, app.ID); !verified {
+				return
+			}
+			principal = authz.Webhook(app.ID, route.Name)
+		}
+	}
+
 	// Any passcode this browser has entered, for CheckData to check (R-075a).
 	// Carried on the principal, signed in or not: someone with an account but
 	// no grant on a passcode app gets in the same way a stranger does.
@@ -222,11 +243,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Counted before the branch, so the anonymous path is provably not a bypass:
 	// every request to every app increments this, whatever the outcome.
-	if p.Metrics != nil {
-		p.Metrics.Request(app.ID, principal.Kind, allowed)
-	}
-	// Install-wide and without the app (R-400): the kind of principal only.
-	telemetry.ProxyRequest(ctx, allowed, string(principal.Kind))
+	p.count(r, app.ID, principal.Kind, allowed)
 
 	// Anonymous is a real subject, not a bypass, and is rate-limited like
 	// one (R-075): after the count above, so a refused request is still seen.
@@ -297,7 +314,33 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		target, transport = p.dialed(target, upstream)
 	}
 
+	// 10a. A delivery that can be replayed takes its signature (R-433). Here,
+	// after everything that could still refuse it, so a refusal leaves no claim.
+	if delivery != nil && delivery.digest != nil {
+		var claimed bool
+		if transport, claimed = p.claimWebhook(w, r, delivery, app.ID, transport); !claimed {
+			return
+		}
+	}
+
 	p.forward(w, r, target, transport, token, principal, prefix, visit)
+}
+
+// count records one request and its outcome.
+func (p *Proxy) count(r *http.Request, appID string, kind authz.PrincipalKind, allowed bool) {
+	if p.Metrics != nil {
+		p.Metrics.Request(appID, kind, allowed)
+	}
+	// Install-wide and without the app (R-400): the kind of principal only.
+	telemetry.ProxyRequest(r.Context(), allowed, string(kind))
+}
+
+// now is the proxy's clock.
+func (p *Proxy) now() time.Time {
+	if p.clock != nil {
+		return p.clock()
+	}
+	return time.Now()
 }
 
 // forward sets the headers and proxies the request. visit, when set, is the
@@ -399,6 +442,14 @@ func (p *Proxy) forward(w http.ResponseWriter, r *http.Request, target *url.URL,
 	// ReverseProxy keeps the decision with the rest of the authorization
 	// logic. The request to the app is canceled when a re-check fails, which
 	// ends a response still streaming from it.
+	//
+	// Except a webhook delivery. It is good for this one request, and has no
+	// credential to check again: a re-check would take it for anonymous and
+	// end a slow response (R-429).
+	if principal.Kind == authz.KindWebhook {
+		rp.ServeHTTP(w, r)
+		return
+	}
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 	rw := &reauthorizing{
@@ -635,6 +686,9 @@ func (p *Proxy) fail(w http.ResponseWriter, r *http.Request, status int, message
 // must state: absence of the assertion header means the request did not come
 // through Pando at all, and an app may reject on that basis.
 func subjectOf(p authz.Principal) string {
+	if p.Kind == authz.KindWebhook {
+		return p.ID // webhook:<route name> (R-429).
+	}
 	if p.Kind == authz.KindAnonymous || p.UserID == "" {
 		if p.Kind == authz.KindToken && p.ID != "" {
 			return p.ID

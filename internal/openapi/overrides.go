@@ -27,6 +27,7 @@ func marshalers() map[string]*Schema {
 		// The two keys a response shows once, on purpose.
 		"github.com/trypando/pando/internal/core/autodeploy.Secret":       shown("The webhook secret. Shown in this response only."),
 		"github.com/trypando/pando/internal/core/subscription.secretOnce": shown("The signing key. Shown in this response only."),
+		"github.com/trypando/pando/internal/core/webhookroute.Secret":     shown("The route's secret. Shown in this response only."),
 
 		// Arbitrary JSON, written as it was stored. json.RawMessage is an
 		// alias of jsontext.Value.

@@ -19,6 +19,14 @@ Unreleased above it. -->
 
 ## [Unreleased]
 
+### Added
+
+- Webhook routes let a private app receive webhooks (R-425 – R-433). A route names one method and exact
+  path and how to verify the sender, an HMAC-SHA256 signature or a secret in a header, and the rest of the
+  app stays private. The secret is generated or pasted, and a signature the app already accepted is not
+  forwarded again. Manage routes from the app's settings, `pando app webhook-route`, MCP or the API. Host
+  policy's `disable_webhook_routes` turns them off.
+
 ## [0.18.0] - 2026-11-05
 
 ### Security

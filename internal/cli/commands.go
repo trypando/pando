@@ -403,6 +403,7 @@ func appCmd(client func() (*Client, error)) *cobra.Command {
 	cmd.AddCommand(registryCredentialCmd(client))
 	cmd.AddCommand(imageUpdateCmd(client))
 	cmd.AddCommand(autoDeployCmd(client))
+	cmd.AddCommand(webhookRouteCmd(client))
 	cmd.AddCommand(appDetectionCmd(client))
 	cmd.AddCommand(appSpecCmd(client))
 

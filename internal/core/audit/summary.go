@@ -72,6 +72,11 @@ var summaries = map[string]string{
 	"app.unfavorite":                 "Removed {app} from favorites",
 	"app.update":                     "Changed {app}",
 	"app.use":                        "Opened {app}",
+	"app.webhook.refused":            "Refused a webhook delivery to {app}",
+	"app.webhook.replayed":           "Refused a replayed webhook delivery to {app}",
+	"app.webhook_route.add":          "Added a webhook route to {app}",
+	"app.webhook_route.remove":       "Removed a webhook route from {app}",
+	"app.webhook_route.secret":       "Replaced a webhook route's secret on {app}",
 	"app.use.denied":                 "Refused a visit to {app}",
 	"app.volume.add":                 "Added storage to {app}",
 

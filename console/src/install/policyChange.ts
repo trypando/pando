@@ -36,6 +36,7 @@ const LABELS: Record<string, string> = {
   disable_ai_screening: 'Disable AI screening',
   disable_anonymous_use_audit: "Don't log anonymous visits",
   disable_anonymous_denial_audit: "Don't log anonymous refusals",
+  disable_webhook_routes: 'Disable webhook routes',
   min_security_score: 'Minimum security score',
   insecure_action: 'Stop running apps below the minimum',
   insecure_grace_hours: 'Grace period (hours)',

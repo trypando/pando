@@ -394,6 +394,13 @@ function AccessPage() {
           on={!current.disable_anonymous_denial_audit}
           onChange={(on) => edit({ disable_anonymous_denial_audit: !on })}
         />
+        {/* R-431: on unless turned off. */}
+        <SwitchRow
+          label="Webhook routes"
+          field="disable_webhook_routes"
+          on={!current.disable_webhook_routes}
+          onChange={(on) => edit({ disable_webhook_routes: !on })}
+        />
         {others.length > 0 && (
           <SettingRow label="Turned off verbs" field="disabled_verbs">
             <span style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-2)', justifyContent: 'flex-end' }}>

@@ -244,3 +244,16 @@ func TestR097_TrialEgressFailsWhenTheInstallationsRulesCannotBeRead(t *testing.T
 	_, err := p.TrialEgress(context.Background(), loose)
 	require.Error(t, err)
 }
+
+// TestR431_APlanDeclaringAWebhookRouteIsRefusedWhenPolicyTurnsThemOff asserts
+// the refusal arrives at plan time.
+func TestR431_APlanDeclaringAWebhookRouteIsRefusedWhenPolicyTurnsThemOff(t *testing.T) {
+	s := plannableSpec()
+	s.WebhookRoutes = []spec.WebhookRoute{{Name: "noodle", Method: "POST", Path: "/hook",
+		Verification: spec.WebhookVerification{Kind: spec.WebhookHeader, Header: "X-Token"}}}
+	doc := policy.Default()
+	doc.DisableWebhookRoutes = true
+
+	_, err := plannerWith(t, doc, egressRuntime()).Check(context.Background(), s)
+	require.Equal(t, errs.PlanWebhookRoutesDisabled, errs.CodeOf(err))
+}

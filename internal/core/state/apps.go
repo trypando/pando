@@ -1796,3 +1796,23 @@ func (a *Apps) WithAutoDeploy(ctx context.Context) ([]App, error) {
 	}
 	return out, rows.Err()
 }
+
+// PinnedAndNewest are the app's pinned revision and its newest, either zero when
+// there is none.
+func (a *Apps) PinnedAndNewest(ctx context.Context, app App) (pinned, newest Revision, err error) {
+	if app.PinnedSpecID != "" {
+		if pinned, _, err = a.RevisionByID(ctx, app.PinnedSpecID); err != nil {
+			return
+		}
+	}
+	newest = pinned
+	list, err := a.ListRevisions(ctx, app.ID)
+	if err != nil || len(list) == 0 || list[0].ID == pinned.ID || list[0].Revision < pinned.Revision {
+		return
+	}
+	latest, found, err := a.RevisionByID(ctx, list[0].ID)
+	if err == nil && found {
+		newest = latest
+	}
+	return
+}

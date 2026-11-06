@@ -68,6 +68,7 @@ export interface PolicyDoc {
   disable_ai_screening?: boolean;
   disable_anonymous_use_audit?: boolean;
   disable_anonymous_denial_audit?: boolean;
+  disable_webhook_routes?: boolean;
 
   disable_password_sign_in?: boolean;
   disable_jit_provisioning?: boolean;
@@ -127,6 +128,7 @@ const FIELD_PAGES: Record<keyof PolicyDoc, PolicyPage | 'overview'> = {
   require_local_two_factor: 'access',
   disable_anonymous_use_audit: 'access',
   disable_anonymous_denial_audit: 'access',
+  disable_webhook_routes: 'access',
 
   egress_mode: 'egress',
   egress_list: 'egress',

@@ -195,6 +195,7 @@ export interface AppSpec {
   egress: Egress;
   retention: Retention;
   availability?: Availability;
+  webhook_routes?: (WebhookRoute[] | null);
   warnings?: (Warning[] | null);
 }
 
@@ -282,6 +283,7 @@ export interface PolicyDocument {
   require_local_two_factor?: boolean;
   disable_update_check?: boolean;
   allow_private_webhooks?: boolean;
+  disable_webhook_routes?: boolean;
   update_channel?: string;
   upgrade_in_place?: boolean;
   auto_upgrade_patches?: boolean;
@@ -664,6 +666,14 @@ export interface Availability {
   priority?: number;
 }
 
+export interface WebhookRoute {
+  name: string;
+  method: string;
+  path: string;
+  verification: WebhookVerification;
+  allow_repeats?: boolean;
+}
+
 export interface Warning {
   code: string;
   message: string;
@@ -902,6 +912,12 @@ export interface Resolution {
   service_ref?: string;
   target?: string;
   secret_ref?: string;
+}
+
+export interface WebhookVerification {
+  kind: string;
+  header: string;
+  prefix?: string;
 }
 
 export interface Auth {

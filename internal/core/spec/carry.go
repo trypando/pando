@@ -52,6 +52,10 @@ func Carry(pinned, next *AppSpec) *AppSpec {
 	out.Egress = pinned.Egress
 	out.Deploy.RequireApproval = pinned.Deploy.RequireApproval
 
+	// Which deliveries reach the app. Not read from the repository, and
+	// dropping them would stop a sender without anybody deciding it (R-425).
+	out.WebhookRoutes = pinned.WebhookRoutes
+
 	// How much of the host the app and each workload may take. Not read from
 	// the repository either, and changed only under app.resources.override
 	// (R-241): a re-detection that put the host's defaults back would change

@@ -14,6 +14,11 @@ const (
 	KindToken     PrincipalKind = "token"
 	KindAnonymous PrincipalKind = "anonymous"
 	KindSystem    PrincipalKind = "system"
+
+	// KindWebhook is a delivery the proxy verified against a webhook route
+	// (R-429). It exists for that one request and only on the data plane: it
+	// holds no grants, so every control-plane check refuses it.
+	KindWebhook PrincipalKind = "webhook"
 )
 
 // Principal is the resolved identity of a request (design 06 §1).
@@ -66,12 +71,21 @@ type Principal struct {
 	// passcode. Unverified as carried — CheckData asks the store whether each
 	// is live, on every request, as it asks about everything else.
 	Passcodes map[string]string
+
+	// WebhookAppID is the one app a webhook principal may use (R-429).
+	WebhookAppID string
 }
 
 // Anonymous is the principal for an unauthenticated request. It is a real
 // principal with a real check path, not an absence — R-075's anonymous grant is
 // a grant like any other, and R-056's assertion carries sub: "anonymous".
 func Anonymous() Principal { return Principal{Kind: KindAnonymous} }
+
+// Webhook is the principal for a delivery verified against an app's route. Its
+// ID is the assertion's subject (R-429).
+func Webhook(appID, route string) Principal {
+	return Principal{Kind: KindWebhook, ID: "webhook:" + route, WebhookAppID: appID}
+}
 
 // System is the principal for the reconciler and background jobs. It bypasses
 // grant checks but still writes audit events attributed to "system": anything a
@@ -648,6 +662,14 @@ func (a *Authorizer) CheckInstall(ctx context.Context, p Principal, verb Verb) e
 // here, reject it — that is R-029, and the test asserting an operator on someone
 // else's app is denied *use* exists to catch exactly that change.
 func (a *Authorizer) CheckData(ctx context.Context, p Principal, appID string) error {
+	// A route is not a grant (R-070): nothing below applies to a delivery.
+	// The proxy matched its path and verified it before making this principal.
+	if p.Kind == KindWebhook {
+		if p.WebhookAppID == appID {
+			return nil
+		}
+		return errs.New(errs.PermDenied, "You do not have access to this app.")
+	}
 	if err := a.checkPrincipal(ctx, p); err != nil {
 		return a.deny(ctx, p, appID, "app.use", err)
 	}

@@ -102,6 +102,7 @@ import (
 	"github.com/trypando/pando/internal/core/tokenkey"
 	"github.com/trypando/pando/internal/core/twofactor"
 	"github.com/trypando/pando/internal/core/update"
+	"github.com/trypando/pando/internal/core/webhookroute"
 	"github.com/trypando/pando/internal/detect"
 	"github.com/trypando/pando/internal/detect/registryprobe"
 	"github.com/trypando/pando/internal/errs"
@@ -1005,6 +1006,7 @@ func serve(ctx context.Context, configPath string) error {
 	// The single enforcement point for every request to every app (R-023).
 
 	limitsWire := newLimitsWiring(db, policyStore, logger)
+	webhookRouteSecrets := state.NewWebhookRouteSecrets(db, secretsAdapter, secretsRef)
 	appProxy := &proxy.Proxy{
 		Resolver:      appResolver,
 		Authenticator: authenticator,
@@ -1015,12 +1017,17 @@ func serve(ctx context.Context, configPath string) error {
 		Auditor:       auditor,
 		// Whether a visit by someone not signed in is recorded as app.use
 		// (R-227); read when one would be, like any other policy.
-		UsePolicy:   hostPolicy,
-		ExternalURL: externalURL,
-		Metrics:     proxy.NewCounters(),
-		Logger:      logger,
-		LoginPath:   httpapi.LoginPath,
-		Mode:        cfg.Server.RoutingMode,
+		UsePolicy: hostPolicy,
+		Webhooks: proxy.StateWebhooks{
+			Secrets:    webhookRouteSecrets,
+			Deliveries: state.NewWebhookDeliveries(db),
+		},
+		WebhookPolicy: hostPolicy,
+		ExternalURL:   externalURL,
+		Metrics:       proxy.NewCounters(),
+		Logger:        logger,
+		LoginPath:     httpapi.LoginPath,
+		Mode:          cfg.Server.RoutingMode,
 
 		// Every request let through is activity, kept in memory and written
 		// once a minute from each replica (R-394).
@@ -1183,6 +1190,10 @@ func serve(ctx context.Context, configPath string) error {
 		Deployer:    deployer,
 		Approvals:   approvals,
 		AutoDeploy:  autoDeploy,
+		WebhookRoutes: &webhookroute.Service{
+			Apps: apps, Secrets: webhookRouteSecrets, Policy: hostPolicy, Authz: authorizer,
+			Audit: httpapi.AuditFunc(auditor),
+		},
 
 		Subscriptions: subscriptions,
 		Inbox:         &subscription.Inbox{Store: notifications},

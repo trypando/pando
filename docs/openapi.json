@@ -1159,7 +1159,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/View"
+                  "$ref": "#/components/schemas/AutodeployView"
                 }
               }
             }
@@ -1202,7 +1202,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Saved"
+                  "$ref": "#/components/schemas/AutodeploySaved"
                 }
               }
             }
@@ -1212,7 +1212,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Saved"
+                  "$ref": "#/components/schemas/AutodeploySaved"
                 }
               }
             }
@@ -5240,6 +5240,238 @@
           }
         },
         "x-pando-verb": "app.spec.edit"
+      }
+    },
+    "/api/v1/apps/{appID}/webhook-routes": {
+      "get": {
+        "operationId": "listWebhookRoutes",
+        "summary": "List webhook routes",
+        "description": "The routes on the app's newest revision: each with `secret_set`, without which it refuses every delivery, and `deployed`, whether the app runs it as it stands.\n\nNeeds `app.view`.",
+        "tags": [
+          "Configuration"
+        ],
+        "parameters": [
+          {
+            "name": "appID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookrouteView"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-pando-verb": "app.view"
+      },
+      "post": {
+        "operationId": "addWebhookRoute",
+        "summary": "Add a webhook route",
+        "description": "Let a verified delivery with no Pando credential reach one method and exact path of the app. Body: `name`, `method` (POST, PUT or PATCH), `path`, `verification` (`kind` hmac_sha256 or header, `header`, and for hmac_sha256 an optional `prefix` such as `sha256=`), `allow_repeats` (hmac_sha256 only: no replay check), and `secret` with one the provider issued. Without `secret`, one is generated and returned here, the only time it is shown. Saved as a revision the next deploy ships. Also needs `app.secrets.write`.\n\nNeeds `app.spec.edit`.",
+        "tags": [
+          "Configuration"
+        ],
+        "parameters": [
+          {
+            "name": "appID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "method": {
+                    "type": "string"
+                  },
+                  "path": {
+                    "type": "string"
+                  },
+                  "verification": {
+                    "$ref": "#/components/schemas/WebhookVerification"
+                  },
+                  "allow_repeats": {
+                    "type": "boolean"
+                  },
+                  "secret": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "name",
+                  "method",
+                  "path",
+                  "verification",
+                  "secret"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookrouteSaved"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-pando-verb": "app.spec.edit"
+      }
+    },
+    "/api/v1/apps/{appID}/webhook-routes/{name}": {
+      "delete": {
+        "operationId": "removeWebhookRoute",
+        "summary": "Remove a webhook route",
+        "description": "Take a route out of the next revision and remove its secret now, so deliveries are refused from here on.\n\nNeeds `app.spec.edit`.",
+        "tags": [
+          "Configuration"
+        ],
+        "parameters": [
+          {
+            "name": "appID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "revision": {
+                      "type": "integer",
+                      "format": "int64"
+                    }
+                  },
+                  "required": [
+                    "revision"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-pando-verb": "app.spec.edit"
+      }
+    },
+    "/api/v1/apps/{appID}/webhook-routes/{name}/secret": {
+      "post": {
+        "operationId": "setWebhookRouteSecret",
+        "summary": "Replace a webhook route's secret",
+        "description": "Replace the secret at once, with no overlap. Body: `secret` with one the provider issued, answered 204. With no body one is generated and returned, the only time it is shown.\n\nNeeds `app.secrets.write`.",
+        "tags": [
+          "Configuration"
+        ],
+        "parameters": [
+          {
+            "name": "appID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "secret": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "secret"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "secret": {
+                      "type": "string",
+                      "description": "The route's secret. Shown in this response only."
+                    }
+                  },
+                  "required": [
+                    "secret"
+                  ]
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "Done. No body."
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-pando-verb": "app.secrets.write"
       }
     },
     "/api/v1/audit": {
@@ -13374,7 +13606,7 @@
               "null"
             ],
             "items": {
-              "$ref": "#/components/schemas/Route"
+              "$ref": "#/components/schemas/ReferenceRoute"
             }
           }
         },
@@ -13874,6 +14106,12 @@
           "availability": {
             "$ref": "#/components/schemas/Availability"
           },
+          "webhook_routes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WebhookRoute"
+            }
+          },
           "warnings": {
             "type": "array",
             "items": {
@@ -14279,6 +14517,65 @@
         "required": [
           "app_id",
           "checked_at"
+        ]
+      },
+      "AutodeploySaved": {
+        "type": "object",
+        "properties": {
+          "changed": {
+            "type": "boolean"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "spec_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "changed"
+        ]
+      },
+      "AutodeployView": {
+        "type": "object",
+        "properties": {
+          "settings": {
+            "$ref": "#/components/schemas/AutoDeploy"
+          },
+          "deployed": {
+            "$ref": "#/components/schemas/AutoDeploy"
+          },
+          "pending": {
+            "type": "boolean"
+          },
+          "paused": {
+            "type": "boolean"
+          },
+          "last_check": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AutoDeployCheck"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "webhook_secret_set": {
+            "type": "boolean"
+          },
+          "webhook_url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "settings",
+          "deployed",
+          "pending",
+          "paused",
+          "webhook_secret_set",
+          "webhook_url"
         ]
       },
       "Availability": {
@@ -15734,6 +16031,7 @@
               "PLAN_NO_ADAPTER_MEETS_POLICY",
               "PLAN_SECURITY_BELOW_THRESHOLD",
               "PLAN_SLOT_UNFILLED",
+              "PLAN_WEBHOOK_ROUTES_DISABLED",
               "STATE_ADDRESS_TAKEN",
               "STATE_AI_FUNCTION_ASSIGNED",
               "STATE_APP_EXITED",
@@ -17453,6 +17751,9 @@
           "allow_private_webhooks": {
             "type": "boolean"
           },
+          "disable_webhook_routes": {
+            "type": "boolean"
+          },
           "update_channel": {
             "type": "string"
           },
@@ -17995,6 +18296,39 @@
           "model"
         ]
       },
+      "ReferenceRoute": {
+        "type": "object",
+        "properties": {
+          "method": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "group": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "verb": {
+            "type": "string"
+          },
+          "public": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "method",
+          "path",
+          "group",
+          "title",
+          "summary"
+        ]
+      },
       "Registered": {
         "type": "object",
         "properties": {
@@ -18434,39 +18768,6 @@
           "verbs"
         ]
       },
-      "Route": {
-        "type": "object",
-        "properties": {
-          "method": {
-            "type": "string"
-          },
-          "path": {
-            "type": "string"
-          },
-          "group": {
-            "type": "string"
-          },
-          "title": {
-            "type": "string"
-          },
-          "summary": {
-            "type": "string"
-          },
-          "verb": {
-            "type": "string"
-          },
-          "public": {
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "method",
-          "path",
-          "group",
-          "title",
-          "summary"
-        ]
-      },
       "Routing": {
         "type": "object",
         "properties": {
@@ -18510,24 +18811,6 @@
         "required": [
           "adapter_ref",
           "isolation_floor"
-        ]
-      },
-      "Saved": {
-        "type": "object",
-        "properties": {
-          "changed": {
-            "type": "boolean"
-          },
-          "revision": {
-            "type": "integer",
-            "format": "int64"
-          },
-          "spec_id": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "changed"
         ]
       },
       "Scan": {
@@ -19731,47 +20014,6 @@
           "via"
         ]
       },
-      "View": {
-        "type": "object",
-        "properties": {
-          "settings": {
-            "$ref": "#/components/schemas/AutoDeploy"
-          },
-          "deployed": {
-            "$ref": "#/components/schemas/AutoDeploy"
-          },
-          "pending": {
-            "type": "boolean"
-          },
-          "paused": {
-            "type": "boolean"
-          },
-          "last_check": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/AutoDeployCheck"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "webhook_secret_set": {
-            "type": "boolean"
-          },
-          "webhook_url": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "settings",
-          "deployed",
-          "pending",
-          "paused",
-          "webhook_secret_set",
-          "webhook_url"
-        ]
-      },
       "Volume": {
         "type": "object",
         "properties": {
@@ -19839,6 +20081,121 @@
           "code",
           "message",
           "dismissed"
+        ]
+      },
+      "WebhookRoute": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "method": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "verification": {
+            "$ref": "#/components/schemas/WebhookVerification"
+          },
+          "allow_repeats": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "method",
+          "path",
+          "verification"
+        ]
+      },
+      "WebhookVerification": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "header": {
+            "type": "string"
+          },
+          "prefix": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "header"
+        ]
+      },
+      "WebhookrouteRoute": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "method": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "verification": {
+            "$ref": "#/components/schemas/WebhookVerification"
+          },
+          "allow_repeats": {
+            "type": "boolean"
+          },
+          "secret_set": {
+            "type": "boolean"
+          },
+          "deployed": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "method",
+          "path",
+          "verification",
+          "secret_set",
+          "deployed"
+        ]
+      },
+      "WebhookrouteSaved": {
+        "type": "object",
+        "properties": {
+          "route": {
+            "$ref": "#/components/schemas/WebhookrouteRoute"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "secret": {
+            "type": "string",
+            "description": "The route's secret. Shown in this response only."
+          }
+        },
+        "required": [
+          "route",
+          "revision"
+        ]
+      },
+      "WebhookrouteView": {
+        "type": "object",
+        "properties": {
+          "routes": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/WebhookrouteRoute"
+            }
+          }
+        },
+        "required": [
+          "routes"
         ]
       },
       "Workload": {

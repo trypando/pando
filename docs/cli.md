@@ -793,6 +793,72 @@ What each part of an app is using right now, beside its limits.
 
 CPU is in cores; a part with no limit may use what the host has. A reading, not a history.
 
+#### `app webhook-route`
+
+Let verified webhook deliveries reach one path of an app
+
+```
+pando app webhook-route
+```
+
+A route lets a delivery with no Pando credential through to one method and path,
+once it is verified. The rest of a private app stays private. A change is saved as a
+new configuration revision and takes effect at the app's next deploy.
+
+##### `app webhook-route add`
+
+Add a route, and print its secret if Pando generated one
+
+```
+pando app webhook-route add <app> <name> <path>
+```
+
+With --verify hmac_sha256 (the default), --header holds the hex HMAC-SHA256 of the
+body, after any --prefix. With --verify header, --header holds the secret itself.
+
+Without --secret, Pando generates one and prints it this once.
+
+| Flag | Default | What it does |
+| --- | --- | --- |
+| `--allow-repeats` |  | turn the replay check off, for a sender that repeats identical bodies |
+| `--header` |  | the header holding the signature or the secret |
+| `--method` | `POST` | POST, PUT or PATCH |
+| `--prefix` |  | what comes before the signature, such as sha256= |
+| `--secret` |  | the secret the provider issued; empty generates one |
+| `--verify` | `hmac_sha256` | hmac_sha256 or header |
+
+##### `app webhook-route list`
+
+List an app's webhook routes
+
+```
+pando app webhook-route list <app>
+```
+
+##### `app webhook-route remove`
+
+Remove a route
+
+```
+pando app webhook-route remove <app> <name>
+```
+
+The route's secret goes at once, so deliveries are refused from now on.
+
+##### `app webhook-route secret`
+
+Replace a route's secret, and print it if Pando generated it
+
+```
+pando app webhook-route secret <app> <name>
+```
+
+The old secret stops working at once.
+
+| Flag | Default | What it does |
+| --- | --- | --- |
+| `--secret` |  | the secret the provider issued; empty generates one |
+
 ### `approvals`
 
 See and decide deploys waiting for approval

@@ -209,6 +209,9 @@ func (p *Proxy) recordUse(r *http.Request, principal authz.Principal, appID stri
 	switch {
 	case principal.Kind == authz.KindToken && principal.ID != "":
 		key = "token:" + principal.ID + ":" + appID
+	case principal.Kind == authz.KindWebhook:
+		// Senders keep no cookies either: a route is its own visit.
+		key = principal.ID + ":" + appID
 	default:
 		if c, err := r.Cookie(VisitCookie + appID); err == nil && c.Value != "" {
 			visitID = c.Value
@@ -244,8 +247,12 @@ func (p *Proxy) recordUse(r *http.Request, principal authz.Principal, appID stri
 		detail["visit"] = visitID
 	}
 
+	kind := audit.PrincipalKind(principal.Kind)
+	if principal.Kind == authz.KindWebhook {
+		kind = audit.KindAnonymous // audit_events has no webhook kind; the ID names the route.
+	}
 	if err := p.Auditor.Write(r.Context(), audit.Event{
-		PrincipalKind: audit.PrincipalKind(principal.Kind),
+		PrincipalKind: kind,
 		PrincipalID:   principal.ID,
 		OnBehalfOf:    principal.UserID,
 		Action:        "app.use",
