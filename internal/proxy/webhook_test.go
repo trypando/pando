@@ -42,6 +42,7 @@ type hookStore struct {
 	claimErr error
 
 	secretErr, settleErr error
+	released             string
 }
 
 func (h *hookStore) Get(_ context.Context, _, route string) (secret.Value, bool, error) {
@@ -49,18 +50,18 @@ func (h *hookStore) Get(_ context.Context, _, route string) (secret.Value, bool,
 	return secret.New(key), ok, h.secretErr
 }
 
-func (h *hookStore) Claim(_ context.Context, _, route string, digest []byte, _, _ time.Time) (state.WebhookClaim, error) {
+func (h *hookStore) Claim(_ context.Context, _, route string, digest []byte, _, _ time.Time) (state.WebhookClaim, string, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.claimErr != nil {
-		return 0, h.claimErr
+		return 0, "", h.claimErr
 	}
 	key := route + string(digest)
 	if held, ok := h.seen[key]; ok {
-		return held, nil
+		return held, "", nil
 	}
 	h.seen[key] = state.WebhookInFlight
-	return state.WebhookClaimed, nil
+	return state.WebhookClaimed, "token", nil
 }
 
 func (h *hookStore) Accept(_ context.Context, _, route string, digest []byte, _ time.Time) error {
@@ -70,9 +71,10 @@ func (h *hookStore) Accept(_ context.Context, _, route string, digest []byte, _ 
 	return h.settleErr
 }
 
-func (h *hookStore) Release(_ context.Context, _, route string, digest []byte) error {
+func (h *hookStore) Release(_ context.Context, _, route string, digest []byte, token string) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	h.released = token
 	delete(h.seen, route+string(digest))
 	return nil
 }
@@ -304,7 +306,7 @@ func TestR426_ABadSignatureIsRefused(t *testing.T) {
 func TestR428_ADeliveryIsStillAnOrdinaryProxiedRequest(t *testing.T) {
 	app := newHookApp(t, authz.Anonymous(), hmacRoute())
 	rec := app.send(http.MethodPost, hookPath, hookBody, map[string]string{
-		hookHeader: sign(hookBody), "X-Pando-User": "usr_forged", "Cookie": "pando_session=stolen; theirs=1",
+		hookHeader: sign(hookBody), "X-Pando-User": "usr_forged", "Cookie": "pando_visit_x=1; theirs=1",
 	})
 	require.Equal(t, http.StatusOK, rec.Code)
 	got := app.got[0]
@@ -461,7 +463,7 @@ func TestR433_AnAcceptedSignatureIsNotForwardedAgain(t *testing.T) {
 	again := app.deliver(hookBody)
 	require.Equal(t, http.StatusOK, again.Code)
 	require.Equal(t, 1, app.forwarded())
-	require.Contains(t, app.audit.actions(), "app.webhook.replayed")
+	require.Contains(t, app.audit.actions(), "app.webhook.replay.refused")
 
 	// The same signature in another case is the same delivery.
 	upper := "sha256=" + strings.ToUpper(strings.TrimPrefix(sign(hookBody), "sha256="))
@@ -477,6 +479,7 @@ func TestR433_ARetryAfterAFailureGetsThrough(t *testing.T) {
 	app := newHookApp(t, authz.Anonymous(), hmacRoute())
 	app.status = http.StatusInternalServerError
 	require.Equal(t, http.StatusInternalServerError, app.deliver(hookBody).Code)
+	require.Equal(t, "token", app.store.released, "only the claim this delivery holds")
 
 	app.status = http.StatusOK
 	require.Equal(t, http.StatusOK, app.deliver(hookBody).Code)
@@ -588,4 +591,85 @@ func TestR428_AnAuditOrSettleFailureDoesNotChangeTheAnswer(t *testing.T) {
 
 	app.proxy.Auditor = nil
 	require.Equal(t, http.StatusUnauthorized, app.send(http.MethodPost, hookPath, hookBody, nil).Code)
+}
+
+// TestR430_ACredentialThatFailedStillDecidesAlone asserts a request with a bad
+// token or a dead session is not treated as having none: a good proof does not
+// stand in for the credential it carried.
+func TestR430_ACredentialThatFailedStillDecidesAlone(t *testing.T) {
+	for name, headers := range map[string]map[string]string{
+		"a bad token":      {"Authorization": "Bearer tok_01J0000000000000000000000A.secret"},
+		"a session":        {"Cookie": "pando_session=ses_expired.secret"},
+		"an HTTPS session": {"Cookie": "__Host-pando_session=ses_expired.secret"},
+	} {
+		app := newHookApp(t, authz.Anonymous(), hmacRoute())
+		headers[hookHeader] = sign(hookBody)
+		require.Equal(t, http.StatusFound, app.send(http.MethodPost, hookPath, hookBody, headers).Code, name)
+		require.Zero(t, app.forwarded(), name)
+	}
+
+	// An app's own Authorization header is not a Pando credential (issue #93).
+	app := newHookApp(t, authz.Anonymous(), hmacRoute())
+	rec := app.send(http.MethodPost, hookPath, hookBody, map[string]string{
+		hookHeader: sign(hookBody), "Authorization": "Bearer the-apps-own",
+	})
+	require.Equal(t, http.StatusOK, rec.Code)
+}
+
+type hookActivity struct{ touched int }
+
+func (a *hookActivity) Touch(string) { a.touched++ }
+
+// TestR394_OnlyAForwardedDeliveryIsActivity asserts a replay does not keep an
+// idle app awake.
+func TestR394_OnlyAForwardedDeliveryIsActivity(t *testing.T) {
+	app := newHookApp(t, authz.Anonymous(), hmacRoute())
+	activity := &hookActivity{}
+	app.proxy.Activity = activity
+	require.Equal(t, http.StatusOK, app.deliver(hookBody).Code)
+	require.Equal(t, 1, activity.touched)
+	require.Equal(t, http.StatusOK, app.deliver(hookBody).Code)
+	require.Equal(t, 1, activity.touched, "a replay went no further than Pando")
+
+	route := headerRoute()
+	plain := newHookApp(t, authz.Anonymous(), route)
+	plain.proxy.Activity = activity
+	require.Equal(t, http.StatusOK, plain.send(http.MethodPost, route.Path, "{}", map[string]string{"X-Token": hookKey}).Code)
+	require.Equal(t, 2, activity.touched, "a route with no replay check counts at once")
+}
+
+type quietUse struct{}
+
+func (quietUse) RecordsAnonymousUse(context.Context) bool { return false }
+
+// TestR227_ADeliveryFollowsTheAnonymousUsePolicy asserts a sender is anonymous
+// to disable_anonymous_use_audit.
+func TestR227_ADeliveryFollowsTheAnonymousUsePolicy(t *testing.T) {
+	app := newHookApp(t, authz.Anonymous(), hmacRoute())
+	app.proxy.UsePolicy = quietUse{}
+	require.Equal(t, http.StatusOK, app.deliver(hookBody).Code)
+	require.Empty(t, app.audit.actions())
+}
+
+// TestR428_BodiesBeingReadAreBounded asserts a stranger cannot hold more bodies
+// than the slots allow, that the slot comes back, and that a header route, which
+// reads no body, is not held to it.
+func TestR428_BodiesBeingReadAreBounded(t *testing.T) {
+	app := newHookApp(t, authz.Anonymous(), hmacRoute(), headerRoute())
+	release := app.proxy.FillBodySlots()
+
+	rec := app.deliver(hookBody)
+	require.Equal(t, http.StatusServiceUnavailable, rec.Code)
+	require.Equal(t, "5", rec.Header().Get("Retry-After"))
+	require.Zero(t, app.forwarded())
+
+	plain := app.send(http.MethodPost, "/hooks/plain", "{}", map[string]string{"X-Token": hookKey})
+	require.Equal(t, http.StatusOK, plain.Code)
+
+	release()
+	for range 40 { // more than there are slots: each is given back.
+		bad := app.send(http.MethodPost, hookPath, hookBody, map[string]string{hookHeader: "sha256=00"})
+		require.Equal(t, http.StatusUnauthorized, bad.Code)
+	}
+	require.Equal(t, http.StatusOK, app.deliver(hookBody).Code)
 }

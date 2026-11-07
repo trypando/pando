@@ -868,6 +868,9 @@ func (a *Apps) CreateRevision(ctx context.Context, appID string, s *spec.AppSpec
 			var prev spec.AppSpec
 			if json.Unmarshal(prevBody, &prev) == nil {
 				spec.DropStalePin(&prev, s)
+				if err := dropStaleRouteSecrets(ctx, tx, appID, &prev); err != nil {
+					return Revision{}, err
+				}
 			}
 		}
 	}

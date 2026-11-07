@@ -34,7 +34,7 @@ func (s *Server) handleAddWebhookRoute(w http.ResponseWriter, r *http.Request) {
 	}
 	var req struct {
 		spec.WebhookRoute
-		Secret string `json:"secret"`
+		Secret string `json:"secret,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		Error(w, r, errs.New(errs.ValidInvalid, "The webhook route could not be read.").
@@ -68,7 +68,7 @@ func (s *Server) handleSetWebhookRouteSecret(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	var req struct {
-		Secret string `json:"secret"`
+		Secret string `json:"secret,omitempty"`
 	}
 	// An empty body generates one.
 	if r.ContentLength != 0 {

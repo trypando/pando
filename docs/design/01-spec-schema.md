@@ -435,7 +435,9 @@ type WebhookVerification struct {
 
 **[D]** The secret is not in the spec, and the spec needs no reference to it: it is keyed by the app and
 the route's name (`webhook_route_secrets`, R-427). A route that arrives by a spec save has no secret and
-refuses every delivery until it is given one. Routes carry across a re-detection (`spec.Carry`).
+refuses every delivery until it is given one. Routes carry across a re-detection (`spec.Carry`). Writing a
+revision drops the secret of any route that is in neither the previous revision nor the running one, so a
+name declared again later does not take up the old secret.
 
 **[D]** Under path routing, `Path` is the path after the prefix is stripped (R-167), so a route does not
 change when the app's address does.

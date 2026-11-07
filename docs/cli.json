@@ -2351,7 +2351,7 @@
       "path": "pando app webhook-route add",
       "use": "add <app> <name> <path>",
       "short": "Add a route, and print its secret if Pando generated one",
-      "long": "With --verify hmac_sha256 (the default), --header holds the hex HMAC-SHA256 of the\nbody, after any --prefix. With --verify header, --header holds the secret itself.\n\nWithout --secret, Pando generates one and prints it this once.",
+      "long": "With --verify hmac_sha256 (the default), --header holds the hex HMAC-SHA256 of the\nbody, after any --prefix. With --verify header, --header holds the secret itself.\n\nWithout --paste-secret, Pando generates one and prints it this once.",
       "example": "",
       "aliases": [],
       "hidden": false,
@@ -2382,19 +2382,19 @@
           "required": false
         },
         {
+          "name": "paste-secret",
+          "shorthand": "",
+          "type": "bool",
+          "default": "false",
+          "usage": "ask for the secret the provider issued instead of generating one",
+          "required": false
+        },
+        {
           "name": "prefix",
           "shorthand": "",
           "type": "string",
           "default": "",
           "usage": "what comes before the signature, such as sha256=",
-          "required": false
-        },
-        {
-          "name": "secret",
-          "shorthand": "",
-          "type": "string",
-          "default": "",
-          "usage": "the secret the provider issued; empty generates one",
           "required": false
         },
         {
@@ -2497,11 +2497,11 @@
       "deprecated": "",
       "flags": [
         {
-          "name": "secret",
+          "name": "paste-secret",
           "shorthand": "",
-          "type": "string",
-          "default": "",
-          "usage": "the secret the provider issued; empty generates one",
+          "type": "bool",
+          "default": "false",
+          "usage": "ask for the secret the provider issued instead of generating one",
           "required": false
         }
       ],

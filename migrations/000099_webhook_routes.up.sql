@@ -22,6 +22,7 @@ CREATE TABLE webhook_deliveries (
     route_name       text NOT NULL,
     signature_digest bytea NOT NULL,
     accepted         boolean NOT NULL DEFAULT false,
+    claim_token      uuid NOT NULL DEFAULT gen_random_uuid(),
     expires_at       timestamptz NOT NULL,
     PRIMARY KEY (app_id, route_name, signature_digest)
 );

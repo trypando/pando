@@ -931,6 +931,7 @@ CREATE TABLE webhook_deliveries (
     route_name       text NOT NULL,
     signature_digest bytea NOT NULL,      -- SHA-256 of the signature, never the body or the secret
     accepted         boolean NOT NULL DEFAULT false,
+    claim_token      uuid NOT NULL DEFAULT gen_random_uuid(),   -- who may give the claim up
     expires_at       timestamptz NOT NULL,
     PRIMARY KEY (app_id, route_name, signature_digest)
 );

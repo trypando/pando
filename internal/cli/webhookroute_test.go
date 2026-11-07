@@ -26,7 +26,7 @@ func TestR432_ASecretIsReplacedFromTheCLI(t *testing.T) {
 	require.Contains(t, run(t, api, "", "app", "webhook-route", "secret", "app_1", "noodle").out, "pdwr_new")
 
 	api = newAPI(t).reply("POST /apps/app_1/webhook-routes/noodle/secret", map[string]any{})
-	got := run(t, api, "", "app", "webhook-route", "secret", "app_1", "noodle", "--secret", "whsec_from_the_provider")
+	got := run(t, api, "whsec_from_the_provider\n", "app", "webhook-route", "secret", "app_1", "noodle", "--paste-secret")
 	require.Contains(t, got.out, "Saved.")
 	require.JSONEq(t, `{"secret":"whsec_from_the_provider"}`,
 		api.bodyFor("POST /apps/app_1/webhook-routes/noodle/secret"))
@@ -55,4 +55,19 @@ func TestR432_ARefusalFromTheAPIIsTheCLIsError(t *testing.T) {
 		require.Error(t, got.err, key)
 		require.NotContains(t, got.out, "Secret:")
 	}
+}
+
+// TestR194_APastedSecretIsAskedForNotPassedAsAFlag asserts a provider's secret
+// does not go through the command line.
+func TestR194_APastedSecretIsAskedForNotPassedAsAFlag(t *testing.T) {
+	api := newAPI(t).reply("POST /apps/app_1/webhook-routes", map[string]any{"revision": 4})
+	got := run(t, api, "whsec_from_the_provider\n", "app", "webhook-route", "add", "app_1", "noodle", "/hook",
+		"--header", "X-Sig", "--paste-secret")
+	require.NoError(t, got.err)
+	require.Contains(t, api.bodyFor("POST /apps/app_1/webhook-routes"), "whsec_from_the_provider")
+	require.NotContains(t, got.out, "whsec_from_the_provider")
+
+	got = run(t, newAPI(t), "", "app", "webhook-route", "add", "app_1", "noodle", "/hook",
+		"--header", "X-Sig", "--secret", "whsec_from_the_provider")
+	require.Error(t, got.err, "there is no flag to put it in")
 }

@@ -2,12 +2,14 @@ package state
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 
 	"github.com/trypando/pando/internal/adapter/api"
+	"github.com/trypando/pando/internal/core/spec"
 	"github.com/trypando/pando/internal/errs"
 	"github.com/trypando/pando/internal/secret"
 )
@@ -116,6 +118,36 @@ func (k *WebhookRouteSecrets) Delete(ctx context.Context, appID, route string) e
 	return nil
 }
 
+// dropStaleRouteSecrets removes the secrets of routes neither the previous
+// revision nor the running one has, as a revision is written (R-427). A route
+// taken out by a spec save keeps its secret while it is still running, and
+// otherwise would keep it for good: a later revision declaring that name would
+// take it up with nobody holding app.secrets.write having given it one.
+func dropStaleRouteSecrets(ctx context.Context, tx pgx.Tx, appID string, prev *spec.AppSpec) error {
+	live := []string{}
+	for _, r := range prev.WebhookRoutes {
+		live = append(live, r.Name)
+	}
+	var body []byte
+	err := tx.QueryRow(ctx, `
+		SELECT r.body FROM apps a JOIN spec_revisions r ON r.id = a.pinned_spec_id
+		WHERE a.id = $1`, appID).Scan(&body)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return errs.Wrap(errs.Internal, "Could not read the running spec.", err)
+	}
+	var pinned spec.AppSpec
+	if err == nil && json.Unmarshal(body, &pinned) == nil {
+		for _, r := range pinned.WebhookRoutes {
+			live = append(live, r.Name)
+		}
+	}
+	if _, err := tx.Exec(ctx, `
+		DELETE FROM webhook_route_secrets WHERE app_id = $1 AND NOT route_name = ANY($2)`, appID, live); err != nil {
+		return errs.Wrap(errs.Internal, "Could not remove a stale webhook route secret.", err)
+	}
+	return nil
+}
+
 // WebhookClaim is where a signature stands after asking to claim it (R-433).
 type WebhookClaim int
 
@@ -134,20 +166,23 @@ type WebhookDeliveries struct{ db *DB }
 
 func NewWebhookDeliveries(db *DB) *WebhookDeliveries { return &WebhookDeliveries{db: db} }
 
-// Claim takes a signature for one delivery until expires. A row past its expiry
-// counts as absent, so a claim left by a replica that died ends on its own.
-func (d *WebhookDeliveries) Claim(ctx context.Context, appID, route string, digest []byte, now, expires time.Time) (WebhookClaim, error) {
-	tag, err := d.db.Exec(ctx, `
+// Claim takes a signature for one delivery until expires, and returns the token
+// that names this claim. A row past its expiry counts as absent, so a claim left
+// by a replica that died ends on its own.
+func (d *WebhookDeliveries) Claim(ctx context.Context, appID, route string, digest []byte, now, expires time.Time) (WebhookClaim, string, error) {
+	var token string
+	err := d.db.QueryRow(ctx, `
 		INSERT INTO webhook_deliveries AS t (app_id, route_name, signature_digest, expires_at)
 		VALUES ($1, $2, $3, $4)
 		ON CONFLICT (app_id, route_name, signature_digest) DO UPDATE
-			SET accepted = false, expires_at = EXCLUDED.expires_at
-			WHERE t.expires_at <= $5`, appID, route, digest, expires, now)
-	if err != nil {
-		return 0, errs.Wrap(errs.Internal, "Could not record a webhook delivery.", err)
+			SET accepted = false, expires_at = EXCLUDED.expires_at, claim_token = gen_random_uuid()
+			WHERE t.expires_at <= $5
+		RETURNING claim_token::text`, appID, route, digest, expires, now).Scan(&token)
+	if err == nil {
+		return WebhookClaimed, token, nil
 	}
-	if tag.RowsAffected() == 1 {
-		return WebhookClaimed, nil
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return 0, "", errs.Wrap(errs.Internal, "Could not record a webhook delivery.", err)
 	}
 	var accepted bool
 	err = d.db.QueryRow(ctx, `
@@ -156,32 +191,38 @@ func (d *WebhookDeliveries) Claim(ctx context.Context, appID, route string, dige
 	if errors.Is(err, pgx.ErrNoRows) {
 		// The holder released it between the two statements: it failed, and
 		// the sender will retry, which finds nothing in the way.
-		return WebhookInFlight, nil
+		return WebhookInFlight, "", nil
 	}
 	if err != nil {
-		return 0, errs.Wrap(errs.Internal, "Could not read a webhook delivery.", err)
+		return 0, "", errs.Wrap(errs.Internal, "Could not read a webhook delivery.", err)
 	}
 	if accepted {
-		return WebhookAccepted, nil
+		return WebhookAccepted, "", nil
 	}
-	return WebhookInFlight, nil
+	return WebhookInFlight, "", nil
 }
 
-// Accept keeps a claimed signature until expires: the app answered 2xx.
+// Accept keeps a signature until expires: the app answered 2xx. It takes no
+// token. A delivery the app accepted stands even if its claim expired while the
+// app was answering and another copy took the signature, or gave it up.
 func (d *WebhookDeliveries) Accept(ctx context.Context, appID, route string, digest []byte, expires time.Time) error {
 	if _, err := d.db.Exec(ctx, `
-		UPDATE webhook_deliveries SET accepted = true, expires_at = $4
-		WHERE app_id = $1 AND route_name = $2 AND signature_digest = $3`, appID, route, digest, expires); err != nil {
+		INSERT INTO webhook_deliveries (app_id, route_name, signature_digest, accepted, expires_at)
+		VALUES ($1, $2, $3, true, $4)
+		ON CONFLICT (app_id, route_name, signature_digest) DO UPDATE
+			SET accepted = true, expires_at = EXCLUDED.expires_at`, appID, route, digest, expires); err != nil {
 		return errs.Wrap(errs.Internal, "Could not record a webhook delivery.", err)
 	}
 	return nil
 }
 
-// Release gives a claimed signature up, so the sender's retry is forwarded.
-func (d *WebhookDeliveries) Release(ctx context.Context, appID, route string, digest []byte) error {
+// Release gives up the claim token names, so the sender's retry is forwarded. It
+// leaves a newer claim and an accepted signature alone.
+func (d *WebhookDeliveries) Release(ctx context.Context, appID, route string, digest []byte, token string) error {
 	if _, err := d.db.Exec(ctx, `
 		DELETE FROM webhook_deliveries
-		WHERE app_id = $1 AND route_name = $2 AND signature_digest = $3 AND NOT accepted`, appID, route, digest); err != nil {
+		WHERE app_id = $1 AND route_name = $2 AND signature_digest = $3
+			AND claim_token::text = $4 AND NOT accepted`, appID, route, digest, token); err != nil {
 		return errs.Wrap(errs.Internal, "Could not record a webhook delivery.", err)
 	}
 	return nil

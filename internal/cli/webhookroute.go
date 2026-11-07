@@ -47,7 +47,7 @@ func webhookRouteAddCmd(client func() (*Client, error)) *cobra.Command {
 		Short: "Add a route, and print its secret if Pando generated one",
 		Long: "With --verify hmac_sha256 (the default), --header holds the hex HMAC-SHA256 of the\n" +
 			"body, after any --prefix. With --verify header, --header holds the secret itself.\n\n" +
-			"Without --secret, Pando generates one and prints it this once.",
+			"Without --paste-secret, Pando generates one and prints it this once.",
 		Args: cobra.ExactArgs(3),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := client()
@@ -59,7 +59,10 @@ func webhookRouteAddCmd(client func() (*Client, error)) *cobra.Command {
 			header, _ := cmd.Flags().GetString("header")
 			prefix, _ := cmd.Flags().GetString("prefix")
 			repeats, _ := cmd.Flags().GetBool("allow-repeats")
-			key, _ := cmd.Flags().GetString("secret")
+			key, err := suppliedSecret(cmd)
+			if err != nil {
+				return err
+			}
 			var out struct {
 				Revision int    `json:"revision"`
 				Secret   string `json:"secret"`
@@ -84,7 +87,7 @@ func webhookRouteAddCmd(client func() (*Client, error)) *cobra.Command {
 	add.Flags().String("header", "", "the header holding the signature or the secret")
 	add.Flags().String("prefix", "", "what comes before the signature, such as sha256=")
 	add.Flags().Bool("allow-repeats", false, "turn the replay check off, for a sender that repeats identical bodies")
-	add.Flags().String("secret", "", "the secret the provider issued; empty generates one")
+	add.Flags().Bool("paste-secret", false, "ask for the secret the provider issued instead of generating one")
 	_ = add.MarkFlagRequired("header")
 	return add
 }
@@ -120,7 +123,10 @@ func webhookRouteSecretCmd(client func() (*Client, error)) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			key, _ := cmd.Flags().GetString("secret")
+			key, err := suppliedSecret(cmd)
+			if err != nil {
+				return err
+			}
 			var body any
 			if key != "" {
 				body = map[string]any{"secret": key}
@@ -139,6 +145,16 @@ func webhookRouteSecretCmd(client func() (*Client, error)) *cobra.Command {
 			return nil
 		},
 	}
-	set.Flags().String("secret", "", "the secret the provider issued; empty generates one")
+	set.Flags().Bool("paste-secret", false, "ask for the secret the provider issued instead of generating one")
 	return set
+}
+
+// suppliedSecret asks for a provider's secret when --paste-secret says there is
+// one. Asked for, not a flag's value, which would reach shell history and the
+// process list (R-194).
+func suppliedSecret(cmd *cobra.Command) (string, error) {
+	if paste, _ := cmd.Flags().GetBool("paste-secret"); !paste {
+		return "", nil
+	}
+	return promptSecret(cmd, "Secret: ")
 }

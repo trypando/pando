@@ -5323,8 +5323,7 @@
                   "name",
                   "method",
                   "path",
-                  "verification",
-                  "secret"
+                  "verification"
                 ]
               }
             }
@@ -5436,10 +5435,7 @@
                   "secret": {
                     "type": "string"
                   }
-                },
-                "required": [
-                  "secret"
-                ]
+                }
               }
             }
           }

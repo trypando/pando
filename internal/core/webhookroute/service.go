@@ -147,11 +147,15 @@ func (s *Service) Add(ctx context.Context, p authz.Principal, app state.App, r s
 		return Saved{}, err
 	}
 
-	if err := s.Secrets.Put(ctx, app.ID, r.Name, key); err != nil {
-		return Saved{}, err
-	}
+	// The revision first: one that fails leaves no secret behind, and one whose
+	// secret then fails is a route that refuses every delivery until SetSecret
+	// gives it one. Saving a revision also clears a stale secret of this name
+	// (state.Apps.CreateRevision), which would otherwise replace this one.
 	rev, err := s.Apps.CreateRevision(ctx, app.ID, &next, spec.OriginEdited, p.ID)
 	if err != nil {
+		return Saved{}, err
+	}
+	if err := s.Secrets.Put(ctx, app.ID, r.Name, key); err != nil {
 		return Saved{}, err
 	}
 	s.audit(ctx, p, "app.webhook_route.add", app.ID, map[string]any{
@@ -179,11 +183,14 @@ func (s *Service) Remove(ctx context.Context, p authz.Principal, app state.App, 
 	next := *newest.Body
 	next.WebhookRoutes = slices.DeleteFunc(slices.Clone(next.WebhookRoutes),
 		func(r spec.WebhookRoute) bool { return r.Name == name })
-	rev, err := s.Apps.CreateRevision(ctx, app.ID, &next, spec.OriginEdited, p.ID)
-	if err != nil {
+	// The secret first: a failure either way leaves the route in the revision,
+	// so the call can be made again, and a running route without a secret
+	// refuses every delivery.
+	if err := s.Secrets.Delete(ctx, app.ID, name); err != nil {
 		return 0, err
 	}
-	if err := s.Secrets.Delete(ctx, app.ID, name); err != nil {
+	rev, err := s.Apps.CreateRevision(ctx, app.ID, &next, spec.OriginEdited, p.ID)
+	if err != nil {
 		return 0, err
 	}
 	s.audit(ctx, p, "app.webhook_route.remove", app.ID, map[string]any{"route": name, "revision": rev.Revision})

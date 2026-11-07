@@ -72,7 +72,7 @@ var Actions = []string{
 	"app.use.denied",
 	"app.volume.add",
 	"app.webhook.refused",
-	"app.webhook.replayed",
+	"app.webhook.replay.refused",
 	"app.webhook_route.add",
 	"app.webhook_route.remove",
 	"app.webhook_route.secret",

@@ -226,7 +226,7 @@ func (p *Proxy) recordUse(r *http.Request, principal authz.Principal, appID stri
 	}
 
 	detail := map[string]any{"path": r.URL.Path}
-	if principal.Kind == authz.KindAnonymous {
+	if principal.Kind == authz.KindAnonymous || principal.Kind == authz.KindWebhook {
 		if p.UsePolicy != nil && !p.UsePolicy.RecordsAnonymousUse(r.Context()) {
 			return nil
 		}

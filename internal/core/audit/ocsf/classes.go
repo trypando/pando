@@ -153,7 +153,7 @@ var classes = map[string]Mapping{
 	"app.update":                         apiUpdate,
 	"app.use":                            webAccessGrant,
 	"app.webhook.refused":                webAccessDeny,
-	"app.webhook.replayed":               webAccessDeny,
+	"app.webhook.replay.refused":         webAccessDeny,
 	"app.webhook_route.add":              apiUpdate,
 	"app.webhook_route.remove":           apiUpdate,
 	"app.webhook_route.secret":           apiUpdate,

@@ -816,15 +816,15 @@ pando app webhook-route add <app> <name> <path>
 With --verify hmac_sha256 (the default), --header holds the hex HMAC-SHA256 of the
 body, after any --prefix. With --verify header, --header holds the secret itself.
 
-Without --secret, Pando generates one and prints it this once.
+Without --paste-secret, Pando generates one and prints it this once.
 
 | Flag | Default | What it does |
 | --- | --- | --- |
 | `--allow-repeats` |  | turn the replay check off, for a sender that repeats identical bodies |
 | `--header` |  | the header holding the signature or the secret |
 | `--method` | `POST` | POST, PUT or PATCH |
+| `--paste-secret` |  | ask for the secret the provider issued instead of generating one |
 | `--prefix` |  | what comes before the signature, such as sha256= |
-| `--secret` |  | the secret the provider issued; empty generates one |
 | `--verify` | `hmac_sha256` | hmac_sha256 or header |
 
 ##### `app webhook-route list`
@@ -857,7 +857,7 @@ The old secret stops working at once.
 
 | Flag | Default | What it does |
 | --- | --- | --- |
-| `--secret` |  | the secret the provider issued; empty generates one |
+| `--paste-secret` |  | ask for the secret the provider issued instead of generating one |
 
 ### `approvals`
 

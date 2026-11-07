@@ -766,7 +766,8 @@ is sent for.
 ### 4.3 Webhook routes (R-425, issue #377)
 
 **[D] A route is a way to authenticate, not a way around the proxy.** Step 4a runs only for a request
-step 4 left anonymous. On a match it verifies the sender and produces a `webhook` principal naming the
+step 4 left anonymous that carried no session cookie and no Pando-shaped token. One that carried either
+and failed stays anonymous, for §4's reason: two credentials with one quietly winning. On a match it verifies the sender and produces a `webhook` principal naming the
 app and the route, and the request carries on through step 5 and everything after it. A request that
 fails is answered 401 there. No other step is skipped, so R-023 holds.
 
@@ -777,6 +778,11 @@ it names this app. It holds no grant, and no control-plane check accepts one (R-
 **[D] An HMAC route buffers; a header route does not.** The signature covers the whole body, so nothing
 can be forwarded until it is checked. Step 4a reads the body under R-428's limits and replays it to the
 workload. A header route is decided from the headers and streams as §4.2 describes.
+
+**[D] Reading bodies is bounded, because anyone can send one.** A request naming a route with any value
+in its header gets as far as the read. **[P]** 32 reads at once on a replica, 256 MB at the body limit,
+answered 503 past that, with a five-minute limit on each read. A slot is held until the signature is
+checked: after that the sender holds the secret, so it is not given back later.
 
 **[D] Step 4a takes step 5b's limit first.** A delivery is charged to the anonymous bucket before its
 body is read or its secret checked, and is not charged again at 5b. Otherwise a flood would make Pando
@@ -789,6 +795,8 @@ and cannot be altered without the secret. Step 10a claims it by inserting a row 
 `webhook_deliveries`, which also settles two copies arriving at once on different replicas. The claim
 runs after step 2, so a stopped app's 503 leaves nothing behind. A 2xx from the app makes the claim last
 for the window. Any other answer, or a lost connection, deletes it so the provider's retry is forwarded.
+Each claim has a token, and giving one up needs it, so a delivery that outlives its claim cannot delete
+the copy that took over. Accepting needs no token: what the app accepted stands either way.
 A claim left by a replica that died expires on its own after [P: 5 minutes]. Only verified deliveries
 write a row, so a flood of bad signatures costs no writes.
 

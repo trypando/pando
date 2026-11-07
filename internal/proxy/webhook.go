@@ -33,10 +33,16 @@ import (
 // CheckData.
 
 const (
-	// webhookBodyLimit and webhookBodyIdle bound what an hmac_sha256 route
-	// reads before it can decide (R-428) [P], R-411's limits.
+	// webhookBodyLimit, webhookBodyIdle and webhookBodyTotal bound what an
+	// hmac_sha256 route reads before it can decide (R-428) [P], R-411's limits.
 	webhookBodyLimit = 8 << 20
 	webhookBodyIdle  = time.Minute
+	webhookBodyTotal = 5 * time.Minute
+
+	// webhookBodySlots is how many bodies this replica reads at once before
+	// their signatures are checked (R-428) [P]. Anyone can send one, so it bounds
+	// the memory a stranger can hold: 256 MB at the body limit.
+	webhookBodySlots = 32
 
 	// webhookReplayWindow is how long an accepted signature is refused (R-433)
 	// [P]. Longer than any sender's retries, and the limit of the protection:
@@ -55,9 +61,9 @@ const (
 // WebhookStore holds routes' secrets and the signatures seen on them.
 type WebhookStore interface {
 	Get(ctx context.Context, appID, route string) (secret.Value, bool, error)
-	Claim(ctx context.Context, appID, route string, digest []byte, now, expires time.Time) (state.WebhookClaim, error)
+	Claim(ctx context.Context, appID, route string, digest []byte, now, expires time.Time) (state.WebhookClaim, string, error)
 	Accept(ctx context.Context, appID, route string, digest []byte, expires time.Time) error
-	Release(ctx context.Context, appID, route string, digest []byte) error
+	Release(ctx context.Context, appID, route string, digest []byte, token string) error
 }
 
 // WebhookPolicy is what host policy says about routes. *policy.Evaluator is one.
@@ -137,6 +143,16 @@ func (p *Proxy) verifyWebhook(w http.ResponseWriter, r *http.Request, route spec
 		return &webhookDelivery{route: route}, true
 	}
 
+	// Held until the signature is checked. Past that the sender has the secret,
+	// and the body is no longer a stranger's.
+	if !p.takeBodySlot() {
+		p.countRefused(r, appID)
+		w.Header().Set("Retry-After", "5")
+		p.fail(w, r, http.StatusServiceUnavailable, "Too many webhook deliveries are being read. Send this one again.")
+		return nil, false
+	}
+	defer p.releaseBodySlot()
+
 	body, status := readWebhookBody(w, r)
 	if status != 0 {
 		p.countRefused(r, appID)
@@ -157,6 +173,19 @@ func (p *Proxy) verifyWebhook(w http.ResponseWriter, r *http.Request, route spec
 	}
 	return delivery, true
 }
+
+// takeBodySlot reports whether this replica may read another body.
+func (p *Proxy) takeBodySlot() bool {
+	p.bodySlotsOnce.Do(func() { p.bodySlots = make(chan struct{}, webhookBodySlots) })
+	select {
+	case p.bodySlots <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
+
+func (p *Proxy) releaseBodySlot() { <-p.bodySlots }
 
 // sameSecret compares digests, so the comparison takes the same time whatever
 // the lengths of the two values.
@@ -190,6 +219,7 @@ func readWebhookBody(w http.ResponseWriter, r *http.Request) ([]byte, int) {
 	rc := http.NewResponseController(w)
 	body, err := io.ReadAll(&idleLimited{
 		body: http.MaxBytesReader(w, r.Body, webhookBodyLimit), rc: rc,
+		end: time.Now().Add(webhookBodyTotal),
 	})
 	_ = rc.SetReadDeadline(time.Time{})
 	if err != nil {
@@ -205,14 +235,20 @@ func readWebhookBody(w http.ResponseWriter, r *http.Request) ([]byte, int) {
 	return body, 0
 }
 
-// idleLimited ends a read once no byte has arrived for webhookBodyIdle.
+// idleLimited ends a read once no byte has arrived for webhookBodyIdle, or at
+// end, so a body trickled in cannot hold a slot for long.
 type idleLimited struct {
 	body io.Reader
 	rc   *http.ResponseController
+	end  time.Time
 }
 
 func (b *idleLimited) Read(p []byte) (int, error) {
-	_ = b.rc.SetReadDeadline(time.Now().Add(webhookBodyIdle))
+	deadline := time.Now().Add(webhookBodyIdle)
+	if deadline.After(b.end) {
+		deadline = b.end
+	}
+	_ = b.rc.SetReadDeadline(deadline)
 	return b.body.Read(p)
 }
 
@@ -264,7 +300,7 @@ func (p *Proxy) auditWebhook(r *http.Request, route spec.WebhookRoute, appID, ac
 // fail, so the copy is told to come back rather than that all is well.
 func (p *Proxy) claimWebhook(w http.ResponseWriter, r *http.Request, d *webhookDelivery, appID string, next http.RoundTripper) (http.RoundTripper, bool) {
 	now := p.now()
-	claim, err := p.Webhooks.Claim(r.Context(), appID, d.route.Name, d.digest, now, now.Add(webhookClaimLifetime))
+	claim, token, err := p.Webhooks.Claim(r.Context(), appID, d.route.Name, d.digest, now, now.Add(webhookClaimLifetime))
 	if err != nil {
 		log.From(r.Context()).Error("could not claim a webhook delivery", zap.Error(err))
 		w.Header().Set("Retry-After", "30")
@@ -273,7 +309,7 @@ func (p *Proxy) claimWebhook(w http.ResponseWriter, r *http.Request, d *webhookD
 	}
 	switch claim {
 	case state.WebhookAccepted:
-		p.auditWebhook(r, d.route, appID, "app.webhook.replayed", "")
+		p.auditWebhook(r, d.route, appID, "app.webhook.replay.refused", "")
 		w.WriteHeader(http.StatusOK)
 		return nil, false
 	case state.WebhookInFlight:
@@ -281,7 +317,7 @@ func (p *Proxy) claimWebhook(w http.ResponseWriter, r *http.Request, d *webhookD
 		p.fail(w, r, http.StatusConflict, "A copy of this webhook delivery is still being handled. Send it again.")
 		return nil, false
 	}
-	return &settling{next: next, proxy: p, delivery: d, appID: appID}, true
+	return &settling{next: next, proxy: p, delivery: d, appID: appID, token: token}, true
 }
 
 // settling records what the app answered a claimed delivery: 2xx keeps the
@@ -292,6 +328,7 @@ type settling struct {
 	proxy    *Proxy
 	delivery *webhookDelivery
 	appID    string
+	token    string
 }
 
 func (s *settling) RoundTrip(r *http.Request) (*http.Response, error) {
@@ -304,7 +341,7 @@ func (s *settling) RoundTrip(r *http.Request) (*http.Response, error) {
 	if err == nil && resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		settled = store.Accept(ctx, s.appID, d.route.Name, d.digest, s.proxy.now().Add(webhookReplayWindow))
 	} else {
-		settled = store.Release(ctx, s.appID, d.route.Name, d.digest)
+		settled = store.Release(ctx, s.appID, d.route.Name, d.digest, s.token)
 	}
 	if settled != nil {
 		log.From(ctx).Warn("could not settle a webhook delivery", zap.Error(settled))

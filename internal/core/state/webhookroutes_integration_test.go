@@ -31,43 +31,118 @@ func TestR433_ASignatureIsClaimedOnceAcrossReplicas(t *testing.T) {
 	now := time.Date(2026, 11, 6, 12, 0, 0, 0, time.UTC)
 	soon := now.Add(5 * time.Minute)
 
-	claim, err := d.Claim(ctx, appID, "noodle", digest, now, soon)
+	claim, first, err := d.Claim(ctx, appID, "noodle", digest, now, soon)
 	require.NoError(t, err)
 	require.Equal(t, state.WebhookClaimed, claim)
+	require.NotEmpty(t, first)
 
-	claim, err = d.Claim(ctx, appID, "noodle", digest, now, soon)
+	claim, _, err = d.Claim(ctx, appID, "noodle", digest, now, soon)
 	require.NoError(t, err)
 	require.Equal(t, state.WebhookInFlight, claim)
 
 	// Another route's identical signature is another delivery.
-	claim, err = d.Claim(ctx, appID, "other", digest, now, soon)
+	claim, _, err = d.Claim(ctx, appID, "other", digest, now, soon)
 	require.NoError(t, err)
 	require.Equal(t, state.WebhookClaimed, claim)
 
-	require.NoError(t, d.Release(ctx, appID, "noodle", digest))
-	claim, err = d.Claim(ctx, appID, "noodle", digest, now, soon)
+	require.NoError(t, d.Release(ctx, appID, "noodle", digest, first))
+	claim, second, err := d.Claim(ctx, appID, "noodle", digest, now, soon)
 	require.NoError(t, err)
 	require.Equal(t, state.WebhookClaimed, claim, "the retry after a failure")
 
 	week := now.Add(7 * 24 * time.Hour)
 	require.NoError(t, d.Accept(ctx, appID, "noodle", digest, week))
-	claim, err = d.Claim(ctx, appID, "noodle", digest, now, soon)
+	claim, _, err = d.Claim(ctx, appID, "noodle", digest, now, soon)
 	require.NoError(t, err)
 	require.Equal(t, state.WebhookAccepted, claim)
 
-	require.NoError(t, d.Release(ctx, appID, "noodle", digest))
-	claim, err = d.Claim(ctx, appID, "noodle", digest, now, soon)
+	require.NoError(t, d.Release(ctx, appID, "noodle", digest, second))
+	claim, _, err = d.Claim(ctx, appID, "noodle", digest, now, soon)
 	require.NoError(t, err)
 	require.Equal(t, state.WebhookAccepted, claim, "an accepted signature is not released")
 
 	after := week.Add(time.Minute)
-	claim, err = d.Claim(ctx, appID, "noodle", digest, after, after.Add(5*time.Minute))
+	claim, _, err = d.Claim(ctx, appID, "noodle", digest, after, after.Add(5*time.Minute))
 	require.NoError(t, err)
 	require.Equal(t, state.WebhookClaimed, claim, "past the window a replay passes")
 
 	removed, err := state.NewRetention(db).WebhookDeliveries(ctx, after.Add(time.Hour), 100)
 	require.NoError(t, err)
 	require.EqualValues(t, 2, removed)
+}
+
+// TestR433_AnExpiredClaimCannotUndoANewerOne asserts the claim token: a slow
+// delivery whose claim expired cannot delete the copy that took the signature
+// over, and if the app accepted it, that stands.
+func TestR433_AnExpiredClaimCannotUndoANewerOne(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	db := connected(t)
+	appID := webhookApp(ctx, t, db)
+	d := state.NewWebhookDeliveries(db)
+	digest := []byte("digest")
+	now := time.Date(2026, 11, 6, 12, 0, 0, 0, time.UTC)
+
+	_, slow, err := d.Claim(ctx, appID, "noodle", digest, now, now.Add(time.Minute))
+	require.NoError(t, err)
+	later := now.Add(2 * time.Minute)
+	claim, newer, err := d.Claim(ctx, appID, "noodle", digest, later, later.Add(time.Minute))
+	require.NoError(t, err)
+	require.Equal(t, state.WebhookClaimed, claim)
+	require.NotEqual(t, slow, newer)
+
+	require.NoError(t, d.Release(ctx, appID, "noodle", digest, slow))
+	claim, _, err = d.Claim(ctx, appID, "noodle", digest, later, later.Add(time.Minute))
+	require.NoError(t, err)
+	require.Equal(t, state.WebhookInFlight, claim, "the newer claim stands")
+
+	require.NoError(t, d.Accept(ctx, appID, "noodle", digest, later.Add(time.Hour)))
+	require.NoError(t, d.Release(ctx, appID, "noodle", digest, newer))
+	claim, _, err = d.Claim(ctx, appID, "noodle", digest, later, later.Add(time.Minute))
+	require.NoError(t, err)
+	require.Equal(t, state.WebhookAccepted, claim, "accepted by the slow one, not undone by the newer")
+
+	// And with nothing left to update, an accepted delivery is still recorded.
+	require.NoError(t, d.Accept(ctx, appID, "noodle", []byte("gone"), later.Add(time.Hour)))
+	claim, _, err = d.Claim(ctx, appID, "noodle", []byte("gone"), later, later.Add(time.Minute))
+	require.NoError(t, err)
+	require.Equal(t, state.WebhookAccepted, claim)
+}
+
+// TestR427_ANewRouteDoesNotInheritAStaleSecret asserts a name declared again by
+// a spec save starts with no secret, while a route still in the previous
+// revision or still running keeps its own.
+func TestR427_ANewRouteDoesNotInheritAStaleSecret(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	db := connected(t)
+	appID := webhookApp(ctx, t, db)
+	apps := state.NewApps(db)
+	k := state.NewWebhookRouteSecrets(db, sealing{}, "sec_local")
+	route := spec.WebhookRoute{Name: "noodle", Method: "POST", Path: "/hook",
+		Verification: spec.WebhookVerification{Kind: spec.WebhookHeader, Header: "X-Token"}}
+	save := func(routes ...spec.WebhookRoute) {
+		t.Helper()
+		s := minimalSpec()
+		s.WebhookRoutes = routes
+		_, err := apps.CreateRevision(ctx, appID, s, spec.OriginEdited, "usr_test")
+		require.NoError(t, err)
+	}
+	has := func() bool {
+		t.Helper()
+		names, err := k.Names(ctx, appID)
+		require.NoError(t, err)
+		return names["noodle"]
+	}
+
+	save(route)
+	require.NoError(t, k.Put(ctx, appID, "noodle", secret.New("old")))
+	save(route)
+	require.True(t, has(), "an unchanged route keeps it")
+	save()
+	require.True(t, has(), "the previous revision still has the route")
+	save(route)
+	require.False(t, has(), "declared again, it starts with none")
 }
 
 // webhookApp is an app for the rows' foreign keys.
@@ -164,8 +239,8 @@ func TestR427_AFailedStoreIsReported(t *testing.T) {
 
 	d := state.NewWebhookDeliveries(db)
 	now := time.Now()
-	_, err = d.Claim(gone, appID, "noodle", []byte("d"), now, now)
+	_, _, err = d.Claim(gone, appID, "noodle", []byte("d"), now, now)
 	require.Error(t, err)
 	require.Error(t, d.Accept(gone, appID, "noodle", []byte("d"), now))
-	require.Error(t, d.Release(gone, appID, "noodle", []byte("d")))
+	require.Error(t, d.Release(gone, appID, "noodle", []byte("d"), "t"))
 }

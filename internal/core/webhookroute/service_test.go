@@ -290,7 +290,10 @@ func TestR427_AFailedWriteIsReturned(t *testing.T) {
 	s.Secrets = failing{secrets: keys, put: gone}
 	_, err := s.Add(ctx, who, app, route(), "")
 	require.ErrorIs(t, err, gone)
-	require.Empty(t, revs.created, "no route without its secret")
+	s.Secrets = keys
+	key, err := s.SetSecret(ctx, who, app, "noodle", "")
+	require.NoError(t, err, "a route left with no secret is given one")
+	require.NotNil(t, key)
 
 	s, revs, _, _ = service()
 	_, err = s.Add(ctx, who, app, route(), "")
@@ -305,16 +308,43 @@ func TestR427_AFailedWriteIsReturned(t *testing.T) {
 	_, err = s.Remove(ctx, who, app, "noodle")
 	require.ErrorIs(t, err, gone)
 
+	s.Secrets = secrets{}
 	s.Apps = noRevision{revs}
-	_, err = s.Remove(ctx, who, app, "noodle")
-	require.Error(t, err)
 	other := route()
 	other.Name, other.Path = "other", "/other"
 	_, err = s.Add(ctx, who, app, other, "whsec_the-providers-own-secret")
 	require.Error(t, err)
+	require.Empty(t, s.Secrets, "a revision that failed leaves no secret behind")
 
 	_, err = s.Add(ctx, who, app, other, "short")
 	require.Equal(t, errs.ValidInvalid, errs.CodeOf(err))
+}
+
+// TestR430_ARemovalThatFailsCanBeMadeAgain asserts a failure at either step
+// leaves the route in the revision, with no way for a delivery to pass once the
+// secret has gone.
+func TestR430_ARemovalThatFailsCanBeMadeAgain(t *testing.T) {
+	gone := errors.New("database gone")
+	ctx := context.Background()
+	s, revs, keys, _ := service()
+	_, err := s.Add(ctx, who, app, route(), "")
+	require.NoError(t, err)
+
+	s.Secrets = failing{secrets: keys, del: gone}
+	_, err = s.Remove(ctx, who, app, "noodle")
+	require.ErrorIs(t, err, gone)
+	require.Len(t, revs.newest.Body.WebhookRoutes, 1, "still there to remove")
+
+	s.Secrets = keys
+	s.Apps = noRevision{revs}
+	_, err = s.Remove(ctx, who, app, "noodle")
+	require.Error(t, err)
+	require.Empty(t, keys, "the secret went first, so the running route already refuses")
+
+	s.Apps = revs
+	_, err = s.Remove(ctx, who, app, "noodle")
+	require.NoError(t, err)
+	require.Empty(t, revs.newest.Body.WebhookRoutes)
 }
 
 func TestWithNoAuditWriterAChangeStillSaves(t *testing.T) {

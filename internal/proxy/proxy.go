@@ -143,6 +143,10 @@ type Proxy struct {
 	// them and audits refusals.
 	WebhookPolicy WebhookPolicy
 
+	// bodySlots bounds the bodies read before a signature is checked (R-428).
+	bodySlotsOnce sync.Once
+	bodySlots     chan struct{}
+
 	// ExternalURL is how a browser reaches this installation, which decides
 	// whether the visit cookie is marked Secure — the same rule as the session
 	// cookie (O-19). Nil falls back to whether the request arrived over TLS.
@@ -221,8 +225,10 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 4a. No credential: this may be a webhook delivery (R-425, webhook.go).
+	// Carrying one that failed is not having none: it decides alone, as a bad
+	// token does for the session cookie (R-430, credentials.go).
 	var delivery *webhookDelivery
-	if principal.Kind == authz.KindAnonymous {
+	if principal.Kind == authz.KindAnonymous && !carriesCredential(r) {
 		if route, matched := p.webhookRoute(r, appSpec, prefix); matched {
 			var verified bool
 			if delivery, verified = p.verifyWebhook(w, r, route, app.ID); !verified {
@@ -274,7 +280,9 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Only an allowed request is activity: a crawler refused at a private
 	// app's sign-in would otherwise keep it from ever being idle (R-394).
-	if p.Activity != nil {
+	// A delivery that can be replayed is activity once it has its claim (10a):
+	// a copy that goes no further than Pando must not keep the app awake.
+	if p.Activity != nil && (delivery == nil || delivery.digest == nil) {
 		p.Activity.Touch(app.ID)
 	}
 
@@ -320,6 +328,9 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		var claimed bool
 		if transport, claimed = p.claimWebhook(w, r, delivery, app.ID, transport); !claimed {
 			return
+		}
+		if p.Activity != nil {
+			p.Activity.Touch(app.ID)
 		}
 	}
 
