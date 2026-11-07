@@ -19,12 +19,16 @@ Unreleased above it. -->
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-11-06
+
 ### Security
 
 - Update `klauspost/compress` to 1.20.3, fixing a panic on two-block frames
-  ([GHSA-fpmh-frq8-7rj8](https://github.com/advisories/GHSA-fpmh-frq8-7rj8), CVE-2026-116591).
+  ([GHSA-fpmh-frq8-7rj8](https://github.com/advisories/GHSA-fpmh-frq8-7rj8), CVE-2026-116591). High
+  severity. Affects Pando 0.1.0 through 0.18.0.
 - Update `crewjam/saml` to 0.5.2, fixing `NameID` spoofing from a foreign XML namespace in a signed
-  assertion (GO-2026-6909).
+  assertion ([GO-2026-6909](https://pkg.go.dev/vuln/GO-2026-6909)). No published severity. It needs an
+  assertion the configured provider signed. Affects Pando 0.4.0 through 0.18.0 with SAML sign-in configured.
 
 ### Added
 
@@ -1639,7 +1643,8 @@ review the proposal as usual.
 The first release. Its notes were generated from the commit log, which is what this file now exists
 to replace; see the release page for the artifact list.
 
-[Unreleased]: https://github.com/trypando/pando/compare/v0.18.0...main
+[Unreleased]: https://github.com/trypando/pando/compare/v0.19.0...main
+[0.19.0]: https://github.com/trypando/pando/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/trypando/pando/compare/v0.17.2...v0.18.0
 [0.17.2]: https://github.com/trypando/pando/compare/v0.17.1...v0.17.2
 [0.17.1]: https://github.com/trypando/pando/compare/v0.17.0...v0.17.1
