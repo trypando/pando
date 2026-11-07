@@ -414,7 +414,34 @@ an administrator puts a requirement the app's owner cannot remove (design 05 §3
 combined with `AutoDeploy.Enabled`: validation refuses the pair (R-158), and a spec save refuses
 auto-deploy whenever host policy requires approval for the app.
 
-### 2.7 Health, resources, egress, retention
+### 2.6a Webhook routes (R-425, issue #377)
+
+```go
+type WebhookRoute struct {
+    Name   string `json:"name"`   // slug, unique in the app; the assertion's sub is webhook:<name>
+    Method string `json:"method"` // POST | PUT | PATCH
+    Path   string `json:"path"`   // exact, as the app receives it
+
+    Verification WebhookVerification `json:"verification"`
+    AllowRepeats bool                `json:"allow_repeats,omitempty"` // hmac_sha256 only: no replay check (R-433)
+}
+
+type WebhookVerification struct {
+    Kind   string `json:"kind"`             // hmac_sha256 | header (R-426)
+    Header string `json:"header"`           // e.g. X-Hub-Signature-256
+    Prefix string `json:"prefix,omitempty"` // hmac_sha256 only, e.g. sha256=
+}
+```
+
+**[D]** The secret is not in the spec, and the spec needs no reference to it: it is keyed by the app and
+the route's name (`webhook_route_secrets`, R-427). A route that arrives by a spec save has no secret and
+refuses every delivery until it is given one. Routes carry across a re-detection (`spec.Carry`). Writing a
+revision drops the secret of any route that is in neither the previous revision nor the running one, so a
+name declared again later does not take up the old secret.
+
+**[D]** Under path routing, `Path` is the path after the prefix is stripped (R-167), so a route does not
+change when the app's address does.
+
 
 ```go
 type Health struct {
@@ -552,11 +579,15 @@ Diff operates on the spec tree and classifies each change:
 | `benign` | Retention, warnings, failover priority, display-only | Collapsed |
 | `restart` | Env, resources, health | Shown; requires restart |
 | `rebuild` | Source, build config | Shown; triggers a build |
-| `destructive` | Volume removed, slot resolution changed from provisioned to bound, routing mode changed, **runtime adapter changed** | **Shown prominently, requires explicit confirmation** |
+| `destructive` | Volume removed, slot resolution changed from provisioned to bound, routing mode changed, **runtime adapter changed**, webhook route added, changed or removed | **Shown prominently, requires explicit confirmation** |
 
 **[D]** An egress change is `restart` whichever way it goes. Whether it loosens depends on the
 install's rules, which a diff of two specs cannot see; the verb and policy gates that can see them are
 the control (R-183, R-184). A change to `Deploy.RequireApproval` is `benign`.
+
+**[P]** A webhook route change is `destructive` because of what it does to access: adding one lets
+requests into a private app, and removing one stops a sender. Like any spec change it takes effect at
+the app's next deploy, except that removing a route through the API removes its secret at once (R-427).
 
 **[D]** Re-detection (R-022) presents this diff. So does promoting a compose service to Pando-managed (R-100). Same machinery.
 

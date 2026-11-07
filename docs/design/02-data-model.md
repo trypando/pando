@@ -881,6 +881,7 @@ removes rows past a window, a batch at a time. Windows are `retention.*` setting
 | `sso_flows`, `sso_replay` | A flow a day past expiry; an identifier past its assertion's expiry | — (used to be deleted on every sign-in, in the request) |
 | `events` (with `event_deliveries`, `delivery_attempts` by cascade) | Older than 30 days with nothing pending | An event with a delivery still pending (R-366) |
 | `detections`, `backup_attempts` | Rows of apps deleted more than 30 days ago | A live app's |
+| `webhook_deliveries` | Past their own `expires_at` | — |
 
 `spec_revisions` and `audit_events` are not in it: revisions are pruned by the GC under R-152's rules,
 and the audit log by R-347's archiver.
@@ -921,6 +922,23 @@ Migration 000087. Host policy's `standby` (on unless `false`) is in the policy d
 | Object | What it holds |
 |---|---|
 | `app_standbys` | One row per app with a standby, written by the leader's standby pass (`internal/core/standby`). `host` is the runtime's own name for where the standby is (`api.StandbyHandle`), recorded to show and hand back, never chosen by core (R-256). `spec_id` is the pinned spec it was made from. `volumes`, `copies` and `shipped_at` say how current its data is; `unreplicated` names provisioned service types whose data travels in the volume copy. `stale_host` and `promoted_at` are set by a failover: the host the app left, whose copy is removed when it returns (R-419). Cascades with its app's hard delete; the pass deletes a soft-deleted app's row once the runtime has removed the standby. |
+
+### 2.15 Webhook deliveries (R-433, issue #377)
+
+```sql
+CREATE TABLE webhook_deliveries (
+    app_id           text NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+    route_name       text NOT NULL,
+    signature_digest bytea NOT NULL,      -- SHA-256 of the signature, never the body or the secret
+    accepted         boolean NOT NULL DEFAULT false,
+    claim_token      uuid NOT NULL DEFAULT gen_random_uuid(),   -- who may give the claim up
+    expires_at       timestamptz NOT NULL,
+    PRIMARY KEY (app_id, route_name, signature_digest)
+);
+```
+
+**[D]** The primary key is the claim: a second insert of the same signature loses, on any replica. An
+expired row counts as absent. The retention sweep (§2.11) deletes expired rows.
 
 ## 3. Things deliberately not in the schema
 

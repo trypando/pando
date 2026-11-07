@@ -40,6 +40,23 @@ func isPandoToken(value string) bool {
 	return ok && id.Is(id.Token, tokenID)
 }
 
+// carriesCredential reports whether a request came with a Pando credential,
+// whether or not it authenticated: a Pando-shaped bearer or a session cookie.
+// A webhook route is for a sender with none (R-430).
+func carriesCredential(r *http.Request) bool {
+	for _, v := range r.Header.Values("Authorization") {
+		if isPandoToken(v) {
+			return true
+		}
+	}
+	for _, name := range []string{CookiePrefix + "session", "__Host-" + CookiePrefix + "session"} {
+		if _, err := r.Cookie(name); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
 // authenticate resolves a request in front of an app: the Authenticator sees
 // a Pando token if the request carries one, and no Authorization header
 // otherwise.

@@ -163,7 +163,7 @@ exactly this.
 
 | Claim | Content |
 |---|---|
-| `sub` | Pando's stable internal user ID. **Not** the email — an email change must not orphan an app's data. |
+| `sub` | Pando's stable internal user ID. **Not** the email — an email change must not orphan an app's data. `anonymous` for an anonymous request (R-056) and `webhook:<route name>` for a verified delivery (R-429). |
 | `email` | Current email, if known. |
 | `name` | Display name. |
 | `groups` | Group identifiers the user currently holds. |
@@ -198,7 +198,7 @@ exactly this.
 
 ### 6.1 Two planes
 
-**R-070 [D]** **Data plane** — permission to *use* an app. Binary.
+**R-070 [D]** **Data plane** — permission to *use* an app. Binary: a grant opens the whole app or none of it. A webhook route (R-425) is not a grant and gives no one the app; it lets one verified delivery through to one path. *(Amended by issue #377.)*
 
 **R-071 [D]** **Control plane** — permission to administer an app: deploy, configure, read logs, exec, share, delete.
 
@@ -222,6 +222,26 @@ by itself. The consequence is always stated with it: *anyone on the internet, wi
 A list or table may label an app's access in one or two words — *Private*, *Private – shared*,
 *Public*, *Public with passcode* — where the label carries that consequence on hover; the place an
 app is made public states it in full. *(Amended for discussion #262: the apps list's Access column.)*
+
+### 6.2a Webhook routes *(issue #377)*
+
+**R-425 [D]** **An app may declare webhook routes.** A route has a name, a method (`POST`, `PUT` or `PATCH`), an exact path and a verification (R-426), and is part of the spec (R-020). A request with no Pando credential that matches a route and passes verification reaches the app; the rest of a private app stays private. The match is exact, on the path as sent less any routing prefix (R-167): no wildcards or prefixes, and a path holding `..`, an empty segment or an encoded slash matches nothing rather than being cleaned up. A path under `/.pando` cannot be declared (R-172).
+
+**R-426 [D]** **A route verifies its sender in one of two ways.** `hmac_sha256` compares a named header against the hex HMAC-SHA256 of the raw body, after an optional prefix such as `sha256=`. `header` compares a named header against the secret. Both compare in constant time. The header may not be `Cookie`, `Host` or in Pando's `X-Pando-*` namespace. A secret in the URL is refused, because URLs reach logs (R-194).
+
+**R-427 [D]** **A route's secret is generated or supplied.** Pando generates one and shows it once (R-063), or takes one the provider issued [P: at least 16 characters]. It is kept by the secrets adapter under the app and the route's name, never in the spec (R-190). Rotating replaces it at once, with no overlap. A route that leaves the spec and is declared again later starts with no secret, while a route still running keeps its own. Declaring a route needs `app.spec.edit`; setting its secret needs `app.secrets.write`. Removing a route removes its secret at once, so it refuses deliveries before the deploy that takes it out of the running spec.
+
+**R-428 [D]** **A delivery is still an ordinary proxied request (R-023).** It is rate-limited as anonymous before its body is read (R-075), recorded as use (R-227), given an assertion (R-051) and has Pando's headers and cookies stripped (R-053, R-173). An `hmac_sha256` route reads the body before forwarding, holding it to [P: 8 MB, a minute without a byte, five minutes in all] (R-411), with [P: 32] bodies being read at once on a replica before their signatures are checked, and a 503 past that; a `header` route streams. The verification header is forwarded, so an app that also checks it keeps working. A request asking to upgrade its connection matches no route, because a delivery is good for one request (R-429). A delivery is audited as `anonymous` with the route as its ID, because the audit log has no other kind for it.
+
+**R-429 [D]** **A verified delivery has its own identity.** Its assertion carries `sub: webhook:<route name>`, so an app can tell it from a person and from `anonymous`, and it has no email, name or groups. It is good for that route on that app and for that one request, and it implies nothing on the control plane (R-070).
+
+**R-430 [D]** **A route is checked whenever a request has no Pando credential.** A request that matches a route and fails verification is refused with a 401 and never sent to sign-in or to the app, on a public app too, and is audited as a denial (R-227). A request carrying a session or a Pando token is decided by that credential alone, as any other request is, even if it no longer authenticates. A request matching no route is unaffected.
+
+**R-433 [D]** **An `hmac_sha256` route refuses a replayed delivery.** A signature the app has already accepted within [P: 7 days] is answered 200 and not forwarded, so a captured delivery cannot be sent again and a sender that missed the first answer stops retrying. It is audited (R-227), and is not activity (R-394). A delivery counts as accepted only when the app answers 2xx, so a retry after a failure gets through. Only a digest of the signature is kept. A route whose sender repeats identical bodies sets `allow_repeats`, which turns this off. A `header` route has no replay check: a captured request holds the secret, so an attacker can write new deliveries. A replay after the window passes, because these signatures carry no timestamp.
+
+**R-431 [D]** **Host policy may turn webhook routes off.** `disable_webhook_routes`, default off, refuses a plan that declares one and makes the proxy ignore those already deployed. Like any policy setting it may be fixed at startup (R-271).
+
+**R-432 [D]** **Webhook routes are managed from every surface.** The API lists, adds and removes an app's routes and generates, sets and rotates a route's secret (R-261); the CLI, MCP and the console's app page are clients of it. A route's secret is never returned after the call that generated it.
 
 ### 6.3 Groups
 
@@ -1128,7 +1148,7 @@ R-106 describes and is not an error.
 
 **R-271 [D]** Configuration may be supplied by: a YAML file loaded at startup, environment variables, the CLI, or the console. Host policy fields may be fixed at startup in the file or the environment; adapters and AI function assignments (R-259) may be declared in the file. A declared item overrides what is stored and is read-only through the API, console, CLI and MCP while it is declared: a refusal to change it names the file and key, or the variable, that sets it, and `GET /config` reports each one. Removing the declaration and restarting brings back what was stored, and declared and console-managed adapters may be mixed. A declaration that contradicts itself in any category — two defaults in one category, two AI adapters of one provider, one AI function under two adapters, two services adapters providing the same kind of service — stops startup with an error naming both declarations. A declared credential is a reference to an environment variable or a file, never the value (R-190).
 
-**R-272 [D]** **The general pattern, applied throughout:** a setting has a permissive default; host policy can raise the floor; app-level configuration can only move within what policy allows. This applies to isolation class, egress mode, exec, anonymous grants, routing override, resource limits, token expiry, and data destruction.
+**R-272 [D]** **The general pattern, applied throughout:** a setting has a permissive default; host policy can raise the floor; app-level configuration can only move within what policy allows. This applies to isolation class, egress mode, exec, anonymous grants, webhook routes, routing override, resource limits, token expiry, and data destruction.
 
 **R-273 [D] [LATER]** Premade setting profiles for common postures (hobbyist, hardened, regulated), usable as-is or as a starting point.
 

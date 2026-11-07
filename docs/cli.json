@@ -672,7 +672,8 @@
         "pando app status",
         "pando app stop",
         "pando app unfavorite",
-        "pando app usage"
+        "pando app usage",
+        "pando app webhook-route"
       ]
     },
     {
@@ -2291,6 +2292,219 @@
       "hidden": false,
       "deprecated": "",
       "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando app webhook-route",
+      "use": "webhook-route",
+      "short": "Let verified webhook deliveries reach one path of an app",
+      "long": "A route lets a delivery with no Pando credential through to one method and path,\nonce it is verified. The rest of a private app stays private. A change is saved as a\nnew configuration revision and takes effect at the app's next deploy.",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": [
+        "pando app webhook-route add",
+        "pando app webhook-route list",
+        "pando app webhook-route remove",
+        "pando app webhook-route secret"
+      ]
+    },
+    {
+      "path": "pando app webhook-route add",
+      "use": "add <app> <name> <path>",
+      "short": "Add a route, and print its secret if Pando generated one",
+      "long": "With --verify hmac_sha256 (the default), --header holds the hex HMAC-SHA256 of the\nbody, after any --prefix. With --verify header, --header holds the secret itself.\n\nWithout --paste-secret, Pando generates one and prints it this once.",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "allow-repeats",
+          "shorthand": "",
+          "type": "bool",
+          "default": "false",
+          "usage": "turn the replay check off, for a sender that repeats identical bodies",
+          "required": false
+        },
+        {
+          "name": "header",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "the header holding the signature or the secret",
+          "required": true
+        },
+        {
+          "name": "method",
+          "shorthand": "",
+          "type": "string",
+          "default": "POST",
+          "usage": "POST, PUT or PATCH",
+          "required": false
+        },
+        {
+          "name": "paste-secret",
+          "shorthand": "",
+          "type": "bool",
+          "default": "false",
+          "usage": "ask for the secret the provider issued instead of generating one",
+          "required": false
+        },
+        {
+          "name": "prefix",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "what comes before the signature, such as sha256=",
+          "required": false
+        },
+        {
+          "name": "verify",
+          "shorthand": "",
+          "type": "string",
+          "default": "hmac_sha256",
+          "usage": "hmac_sha256 or header",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando app webhook-route list",
+      "use": "list <app>",
+      "short": "List an app's webhook routes",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando app webhook-route remove",
+      "use": "remove <app> <name>",
+      "short": "Remove a route",
+      "long": "The route's secret goes at once, so deliveries are refused from now on.",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando app webhook-route secret",
+      "use": "secret <app> <name>",
+      "short": "Replace a route's secret, and print it if Pando generated it",
+      "long": "The old secret stops working at once.",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "paste-secret",
+          "shorthand": "",
+          "type": "bool",
+          "default": "false",
+          "usage": "ask for the secret the provider issued instead of generating one",
+          "required": false
+        }
+      ],
       "inherited_flags": [
         {
           "name": "config",

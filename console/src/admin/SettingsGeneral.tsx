@@ -39,6 +39,7 @@ import { Screening } from './Screening';
 import { CardHead, PageHead, Quiet } from './settingsParts';
 import { RegistryCredential } from './RegistryCredential';
 import { useNewestSpec } from './newestSpec';
+import { WebhookRoutesCard } from './WebhookRoutes';
 import { AppVerb, useCan } from './verbs';
 
 export function SettingsGeneral({ app }: Readonly<{ app: App }>) {
@@ -54,6 +55,7 @@ export function SettingsGeneral({ app }: Readonly<{ app: App }>) {
       </Card>
       <IgnoredNotices appID={app.id} />
       <AutoDeployCard app={app} />
+      <WebhookRoutesCard app={app} />
       <SourceCredentialCard app={app} />
     </div>
   );

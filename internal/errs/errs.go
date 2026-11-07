@@ -85,6 +85,9 @@ const (
 	// PlanImagePlatformUnsupported is an image with no build for the operating
 	// system and CPU the runtime runs (issue #41), refused before it is pulled.
 	PlanImagePlatformUnsupported Code = "PLAN_IMAGE_PLATFORM_UNSUPPORTED"
+	// PlanWebhookRoutesDisabled is R-431: the app declares webhook routes and
+	// host policy turns them off.
+	PlanWebhookRoutesDisabled Code = "PLAN_WEBHOOK_ROUTES_DISABLED"
 
 	// STATE_* — object in the wrong state for this action. 409.
 	StateInvalid                Code = "STATE_INVALID"

@@ -151,6 +151,11 @@
       "meaning": "A required dependency has nothing filling it, so the deploy would start an app that cannot connect."
     },
     {
+      "code": "PLAN_WEBHOOK_ROUTES_DISABLED",
+      "status": 409,
+      "meaning": "The app declares webhook routes, and host policy turns them off on this installation."
+    },
+    {
       "code": "POLICY_ANONYMOUS_GRANT_FORBIDDEN",
       "status": 403,
       "meaning": "Host policy does not allow apps to be shared with everyone."

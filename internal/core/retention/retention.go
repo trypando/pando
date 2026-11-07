@@ -93,6 +93,8 @@ type Store interface {
 	Sessions(ctx context.Context, before time.Time, limit int) (int64, error)
 	Notifications(ctx context.Context, now time.Time, limit int) (int64, error)
 	IdempotencyKeys(ctx context.Context, before time.Time, limit int) (int64, error)
+	// WebhookDeliveries removes replay records past their own expiry (R-433).
+	WebhookDeliveries(ctx context.Context, now time.Time, limit int) (int64, error)
 	SSOFlows(ctx context.Context, before, now time.Time, limit int) (int64, error)
 }
 
@@ -157,6 +159,9 @@ func (j *Job) Pass(ctx context.Context) map[string]int64 {
 		{"notifications", func(ctx context.Context, n int) (int64, error) { return j.Store.Notifications(ctx, now, n) }},
 		{"idempotency_keys", func(ctx context.Context, n int) (int64, error) {
 			return j.Store.IdempotencyKeys(ctx, now.Add(-s.IdempotencyKeys), n)
+		}},
+		{"webhook_deliveries", func(ctx context.Context, n int) (int64, error) {
+			return j.Store.WebhookDeliveries(ctx, now, n)
 		}},
 		{"sso_flows", func(ctx context.Context, n int) (int64, error) {
 			return j.Store.SSOFlows(ctx, now.Add(-s.SSOFlows), now, n)

@@ -1005,6 +1005,8 @@ func serve(ctx context.Context, configPath string) error {
 	// The single enforcement point for every request to every app (R-023).
 
 	limitsWire := newLimitsWiring(db, policyStore, logger)
+	webhookStore, webhookRoutes := wireWebhookRoutes(webhookRouteWiring{db: db, apps: apps, secrets: secretsAdapter,
+		secretsRef: secretsRef, policy: hostPolicy, authz: authorizer, auditor: auditor})
 	appProxy := &proxy.Proxy{
 		Resolver:      appResolver,
 		Authenticator: authenticator,
@@ -1015,12 +1017,14 @@ func serve(ctx context.Context, configPath string) error {
 		Auditor:       auditor,
 		// Whether a visit by someone not signed in is recorded as app.use
 		// (R-227); read when one would be, like any other policy.
-		UsePolicy:   hostPolicy,
-		ExternalURL: externalURL,
-		Metrics:     proxy.NewCounters(),
-		Logger:      logger,
-		LoginPath:   httpapi.LoginPath,
-		Mode:        cfg.Server.RoutingMode,
+		UsePolicy:     hostPolicy,
+		Webhooks:      webhookStore,
+		WebhookPolicy: hostPolicy,
+		ExternalURL:   externalURL,
+		Metrics:       proxy.NewCounters(),
+		Logger:        logger,
+		LoginPath:     httpapi.LoginPath,
+		Mode:          cfg.Server.RoutingMode,
 
 		// Every request let through is activity, kept in memory and written
 		// once a minute from each replica (R-394).
@@ -1176,13 +1180,14 @@ func serve(ctx context.Context, configPath string) error {
 		Allocations: allocations,
 		// GET /capacity's runtime readings, taken in the background while
 		// somebody is looking rather than on every view (issue #72).
-		Capacity:    capacityReadings,
-		Planner:     appPlanner,
-		Deployments: deployments,
-		Reconciles:  reconciles,
-		Deployer:    deployer,
-		Approvals:   approvals,
-		AutoDeploy:  autoDeploy,
+		Capacity:      capacityReadings,
+		Planner:       appPlanner,
+		Deployments:   deployments,
+		Reconciles:    reconciles,
+		Deployer:      deployer,
+		Approvals:     approvals,
+		AutoDeploy:    autoDeploy,
+		WebhookRoutes: webhookRoutes,
 
 		Subscriptions: subscriptions,
 		Inbox:         &subscription.Inbox{Store: notifications},

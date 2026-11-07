@@ -184,3 +184,9 @@ func (r *StateResolver) IsAppHostname(ctx context.Context, hostname string) (boo
 	_, _, found, err := r.ByHostname(ctx, hostname)
 	return found, err
 }
+
+// StateWebhooks is a WebhookStore over the database (R-427, R-433).
+type StateWebhooks struct {
+	*state.WebhookRouteSecrets
+	*state.WebhookDeliveries
+}

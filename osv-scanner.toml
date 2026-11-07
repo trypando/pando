@@ -17,3 +17,11 @@ from github.com/ProtonMail/go-crypto/openpgp via go-git, the maintained fork
 the advisory recommends. Revisit if `go list -deps ./...` ever names
 golang.org/x/crypto/openpgp.
 """
+
+[[IgnoredVulns]]
+id = "GO-2026-6909"
+reason = """
+The advisory lists no fixed version. v0.5.2 fixes its NameID namespace bug. Its nil
+Issuer panic does not apply: Assertion.Issuer is a value in this library, and a
+missing Issuer is refused. The full analysis is in .github/govulncheck-allowlist.txt.
+"""

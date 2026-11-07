@@ -173,6 +173,9 @@ var auditedRoutes = map[string][]string{
 	"PUT /api/v1/apps/{appID}/auto-deploy":                   {"app.auto_deploy.configure"},
 	"POST /api/v1/apps/{appID}/auto-deploy/webhook-secret":   {"app.auto_deploy.webhook_secret"},
 	"DELETE /api/v1/apps/{appID}/auto-deploy/webhook-secret": {"app.auto_deploy.webhook_secret"},
+	"POST /api/v1/apps/{appID}/webhook-routes":               {"app.webhook_route.add"},
+	"DELETE /api/v1/apps/{appID}/webhook-routes/{name}":      {"app.webhook_route.remove"},
+	"POST /api/v1/apps/{appID}/webhook-routes/{name}/secret": {"app.webhook_route.secret"},
 	// A verified delivery starts a check in the background; the deploy it
 	// leads to is written by the reconciler as the system (R-228).
 	"POST /api/v1/apps/{appID}/auto-deploy/webhook": {"app.auto_deploy"},

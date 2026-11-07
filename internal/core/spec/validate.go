@@ -44,6 +44,7 @@ func Validate(s *AppSpec) error {
 	validateBuild(s, add)
 	validateEgress(s, add)
 	validateAutoDeploy(s, add)
+	validateWebhookRoutes(s, add)
 	validateAvailability(s, add)
 
 	switch len(problems) {

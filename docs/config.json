@@ -757,6 +757,15 @@
       "secret": false
     },
     {
+      "env": "PANDO_POLICY_DISABLE_WEBHOOK_ROUTES",
+      "key": "policy.disable_webhook_routes",
+      "type": "bool",
+      "default": "false",
+      "description": "Turn off webhook routes: a plan declaring one is refused, and deliveries to those already deployed meet the app's ordinary access.",
+      "group": "policy",
+      "secret": false
+    },
+    {
       "env": "PANDO_POLICY_DISABLED_VERBS",
       "key": "policy.disabled_verbs",
       "type": "list",

@@ -60,6 +60,7 @@ var meanings = map[Code]string{
 	PlanAdapterNotConfigured:     "The spec names an adapter this installation does not have.",
 	PlanComposeConstructRejected: "The compose file uses a construct Pando will not translate.",
 	PlanSecurityBelowThreshold:   "This installation requires a security score, and this app is below it or has never been scanned.",
+	PlanWebhookRoutesDisabled:    "The app declares webhook routes, and host policy turns them off on this installation.",
 	PlanEgressLooseningForbidden: "The app loosens the installation's egress rules, and host policy says no app may.",
 	PlanImagePlatformUnsupported: "The app's image has no build for the operating system and CPU architecture this server runs, so it cannot start here.",
 

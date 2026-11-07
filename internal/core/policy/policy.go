@@ -281,6 +281,11 @@ type Document struct {
 	// a cloud metadata address, or to the database it runs on.
 	AllowPrivateWebhooks bool `json:"allow_private_webhooks,omitempty"`
 
+	// DisableWebhookRoutes turns webhook routes off (R-431): a plan declaring
+	// one is refused, and the proxy ignores those already deployed, so a
+	// delivery meets the app's ordinary access.
+	DisableWebhookRoutes bool `json:"disable_webhook_routes,omitempty"`
+
 	// UpdateChannel is which releases the check offers (R-350): stable, the
 	// default, or prerelease, which also offers release candidates.
 	UpdateChannel UpdateChannel `json:"update_channel,omitempty"`
@@ -580,6 +585,35 @@ func (e *Evaluator) RecordsAnonymousUse(ctx context.Context) bool {
 		return true
 	}
 	return !doc.DisableAnonymousUseAudit
+}
+
+// WebhookRoutesDisabled reports whether webhook routes are off (R-431). A policy
+// that cannot be read says they are: a route lets requests into a private app,
+// so when unsure, the app stays as private as it is without one.
+func (e *Evaluator) WebhookRoutesDisabled(ctx context.Context) bool {
+	doc, err := e.load(ctx)
+	if err != nil {
+		return true
+	}
+	return doc.DisableWebhookRoutes
+}
+
+// AllowsWebhookRoutes refuses a spec declaring routes while host policy has
+// them off (R-431).
+func (e *Evaluator) AllowsWebhookRoutes(ctx context.Context, s *spec.AppSpec) error {
+	if len(s.WebhookRoutes) == 0 {
+		return nil
+	}
+	doc, err := e.load(ctx)
+	if err != nil {
+		return err
+	}
+	if doc.DisableWebhookRoutes {
+		return errs.New(errs.PlanWebhookRoutesDisabled,
+			"This app declares webhook routes, and host policy turns them off on this installation.").
+			WithRemedy("Remove the app's webhook routes, or ask whoever administers this installation to turn off disable_webhook_routes.")
+	}
+	return nil
 }
 
 // AuditsAnonymousDenials reports whether a data-plane denial of somebody not

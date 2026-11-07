@@ -67,6 +67,66 @@
       }
     },
     {
+      "name": "pando_add_webhook_route",
+      "description": "Let a verified delivery with no Pando credential reach one method and exact path of an app, which otherwise stays private. With kind hmac_sha256, `header` holds the hex HMAC-SHA256 of the body after any `prefix`, and a signature already accepted is not forwarded again unless allow_repeats is set. With kind header, `header` holds the secret itself. Without `secret`, one is generated and returned this once. Saved as a new configuration that takes effect at the app's next deploy.",
+      "input_schema": {
+        "properties": {
+          "allow_repeats": {
+            "description": "With hmac_sha256: turn the replay check off, for a sender that repeats identical bodies.",
+            "type": "boolean"
+          },
+          "app_id": {
+            "description": "The app's ID.",
+            "type": "string"
+          },
+          "header": {
+            "description": "The header holding the signature or the secret, such as X-Hub-Signature-256.",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "hmac_sha256",
+              "header"
+            ],
+            "type": "string"
+          },
+          "method": {
+            "enum": [
+              "POST",
+              "PUT",
+              "PATCH"
+            ],
+            "type": "string"
+          },
+          "name": {
+            "description": "The route's name: lowercase letters, digits and hyphens, such as noodle.",
+            "type": "string"
+          },
+          "path": {
+            "description": "The exact path the app receives, such as /api/v1/webhook/noodle.",
+            "type": "string"
+          },
+          "prefix": {
+            "description": "With hmac_sha256: what comes before the signature, such as sha256=.",
+            "type": "string"
+          },
+          "secret": {
+            "description": "The secret the provider issued. Left out, one is generated.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app_id",
+          "name",
+          "method",
+          "path",
+          "kind",
+          "header"
+        ],
+        "type": "object"
+      }
+    },
+    {
       "name": "pando_ai_ask_reference",
       "description": "Ask how to do something with Pando. Answered from Pando's API, CLI and MCP reference, citing the endpoints, commands and tools it relies on. Describes; does nothing.",
       "input_schema": {
@@ -1472,6 +1532,22 @@
       }
     },
     {
+      "name": "pando_list_webhook_routes",
+      "description": "The webhook routes on an app's newest configuration: each one's name, method, path and verification, `secret_set`, without which it refuses every delivery, and `deployed`, whether the app runs it as it stands.",
+      "input_schema": {
+        "properties": {
+          "app_id": {
+            "description": "The app's ID.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
       "name": "pando_mark_host_lost",
       "description": "Say a host is gone and start the standby of each app homed on it. With three or more hosts Pando does this itself when most of them cannot reach the host; with fewer it never does. Refused while the host answers. A failed app is not failed over. Returns the apps started and the ones skipped, with why. Needs install.cluster.manage.",
       "input_schema": {
@@ -1703,6 +1779,27 @@
         },
         "required": [
           "app_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_remove_webhook_route",
+      "description": "Remove a webhook route. Its secret goes at once, so deliveries are refused from now on, and the route leaves the configuration at the app's next deploy.",
+      "input_schema": {
+        "properties": {
+          "app_id": {
+            "description": "The app's ID.",
+            "type": "string"
+          },
+          "name": {
+            "description": "The route's name.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app_id",
+          "name"
         ],
         "type": "object"
       }
@@ -2156,6 +2253,31 @@
           "app_id",
           "key",
           "value"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_set_webhook_route_secret",
+      "description": "Replace a webhook route's secret. The old one stops working at once. Without `secret`, one is generated and returned this once.",
+      "input_schema": {
+        "properties": {
+          "app_id": {
+            "description": "The app's ID.",
+            "type": "string"
+          },
+          "name": {
+            "description": "The route's name.",
+            "type": "string"
+          },
+          "secret": {
+            "description": "The secret the provider issued. Left out, one is generated.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app_id",
+          "name"
         ],
         "type": "object"
       }

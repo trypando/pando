@@ -8,3 +8,17 @@ func (p *Proxy) SetClock(now func() time.Time) { p.clock = now }
 // SetReauthInterval shortens how often a long-lived connection is
 // re-authorized, which is assertion.Lifetime outside a test.
 func (p *Proxy) SetReauthInterval(d time.Duration) { p.reauthEvery = d }
+
+// FillBodySlots takes every slot for reading a webhook body, and returns what
+// gives them back.
+func (p *Proxy) FillBodySlots() func() {
+	n := 0
+	for p.takeBodySlot() {
+		n++
+	}
+	return func() {
+		for range n {
+			p.releaseBodySlot()
+		}
+	}
+}

@@ -440,3 +440,28 @@ func TestR244_ANegativeAppLimitSaysWhatToUse(t *testing.T) {
 	require.Contains(t, err.Error(), "0 for unlimited")
 	require.NoError(t, policy.Document{MaxAppsPerUser: 5}.ValidateRules())
 }
+
+// TestR431_WebhookRoutesAreOnUnlessPolicyTurnsThemOff asserts the setting's
+// default, and that an unreadable policy keeps an app as private as it was.
+func TestR431_WebhookRoutesAreOnUnlessPolicyTurnsThemOff(t *testing.T) {
+	routed := &spec.AppSpec{WebhookRoutes: []spec.WebhookRoute{{Name: "noodle"}}}
+
+	on := policy.Static(policy.Default())
+	require.False(t, on.WebhookRoutesDisabled(ctx()))
+	require.NoError(t, on.AllowsWebhookRoutes(ctx(), routed))
+
+	doc := policy.Default()
+	doc.DisableWebhookRoutes = true
+	off := policy.Static(doc)
+	require.True(t, off.WebhookRoutesDisabled(ctx()))
+	require.NoError(t, off.AllowsWebhookRoutes(ctx(), &spec.AppSpec{}), "an app with none has nothing to refuse")
+	err := off.AllowsWebhookRoutes(ctx(), routed)
+	require.Equal(t, errs.PlanWebhookRoutesDisabled, errs.CodeOf(err))
+	require.NotEmpty(t, errs.As(err).Remedy)
+
+	unreadable := policy.New(func(context.Context) (policy.Document, error) {
+		return policy.Document{}, errors.New("database gone")
+	})
+	require.True(t, unreadable.WebhookRoutesDisabled(ctx()))
+	require.Error(t, unreadable.AllowsWebhookRoutes(ctx(), routed))
+}

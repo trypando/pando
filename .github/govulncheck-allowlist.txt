@@ -29,3 +29,20 @@
 # Scorecard runs osv-scanner, which checks modules, not call paths, so it does
 # need an entry: osv-scanner.toml at the repository root ignores this ID with the
 # same reasoning. Remove both together.
+
+# --------------------------------------------------------------------------
+# GO-2026-6909 — crewjam/saml: nil Issuer panic, and NameID in any namespace
+GO-2026-6909
+#
+# The advisory lists no fixed version, so govulncheck reports every release,
+# v0.5.2 included. It describes two bugs:
+#
+# - Subject.NameID matching any XML namespace. Real in v0.5.1, and fixed in v0.5.2,
+#   which scopes it to SAML's namespace.
+#   TestR043_SAMLIgnoresANameIDFromAnotherNamespace covers it.
+# - A nil pointer panic on assertion.Issuer when ExpectedIDPEntityID is set. That
+#   field does not exist in this library, and Assertion.Issuer is a value, not a
+#   pointer, so it cannot be nil. A missing Issuer fails the issuer comparison.
+#   TestR043_SAMLRefusesASignedAssertionWithNoIssuer covers it.
+#
+# Remove this when the advisory lists a fixed version.

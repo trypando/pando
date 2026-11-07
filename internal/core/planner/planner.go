@@ -109,6 +109,9 @@ func (p *Planner) Check(ctx context.Context, s *spec.AppSpec) (*Plan, error) {
 		if err := p.policy.AllowsSource(ctx, s.Source); err != nil {
 			return nil, err
 		}
+		if err := p.policy.AllowsWebhookRoutes(ctx, s); err != nil {
+			return nil, err
+		}
 	}
 	plan.Checks["policy"] = "ok"
 

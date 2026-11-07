@@ -1,0 +1,73 @@
+package cli_test
+
+import (
+	"testing"
+
+	"github.com/stretchr/testify/require"
+)
+
+// TestR432_WebhookRoutesAreManagedFromTheCLI asserts a route is added with the
+// verification the API takes, and a generated secret is printed.
+func TestR432_WebhookRoutesAreManagedFromTheCLI(t *testing.T) {
+	api := newAPI(t).reply("POST /apps/app_1/webhook-routes", map[string]any{"revision": 4, "secret": "pdwr_shown_once"})
+
+	got := run(t, api, "", "app", "webhook-route", "add", "app_1", "noodle", "/api/v1/webhook/noodle",
+		"--header", "X-Hub-Signature-256", "--prefix", "sha256=").out
+	require.Contains(t, got, "pdwr_shown_once")
+	require.Contains(t, got, "revision 4")
+	require.JSONEq(t, `{"name":"noodle","method":"POST","path":"/api/v1/webhook/noodle","allow_repeats":false,"secret":"",
+		"verification":{"kind":"hmac_sha256","header":"X-Hub-Signature-256","prefix":"sha256="}}`,
+		api.bodyFor("POST /apps/app_1/webhook-routes"))
+}
+
+// TestR432_ASecretIsReplacedFromTheCLI asserts both ways of replacing one.
+func TestR432_ASecretIsReplacedFromTheCLI(t *testing.T) {
+	api := newAPI(t).reply("POST /apps/app_1/webhook-routes/noodle/secret", map[string]any{"secret": "pdwr_new"})
+	require.Contains(t, run(t, api, "", "app", "webhook-route", "secret", "app_1", "noodle").out, "pdwr_new")
+
+	api = newAPI(t).reply("POST /apps/app_1/webhook-routes/noodle/secret", map[string]any{})
+	got := run(t, api, "whsec_from_the_provider\n", "app", "webhook-route", "secret", "app_1", "noodle", "--paste-secret")
+	require.Contains(t, got.out, "Saved.")
+	require.JSONEq(t, `{"secret":"whsec_from_the_provider"}`,
+		api.bodyFor("POST /apps/app_1/webhook-routes/noodle/secret"))
+}
+
+func TestR432_RoutesAreListedAndRemovedFromTheCLI(t *testing.T) {
+	api := newAPI(t).
+		reply("GET /apps/app_1/webhook-routes", map[string]any{"routes": []any{map[string]any{"name": "noodle"}}}).
+		reply("DELETE /apps/app_1/webhook-routes/noodle", map[string]any{"revision": 5})
+	require.Contains(t, run(t, api, "", "app", "webhook-route", "list", "app_1").out, "noodle")
+	require.Contains(t, run(t, api, "", "app", "webhook-route", "remove", "app_1", "noodle").out, "Removed.")
+}
+
+// TestR432_ARefusalFromTheAPIIsTheCLIsError asserts each command says so, rather
+// than printing a secret or "Saved." it did not get.
+func TestR432_ARefusalFromTheAPIIsTheCLIsError(t *testing.T) {
+	refused := map[string]any{"code": "VALID_INVALID", "message": "No."}
+	for key, args := range map[string][]string{
+		"GET /apps/app_1/webhook-routes":                {"list", "app_1"},
+		"POST /apps/app_1/webhook-routes":               {"add", "app_1", "noodle", "/hook", "--header", "X-Sig"},
+		"DELETE /apps/app_1/webhook-routes/noodle":      {"remove", "app_1", "noodle"},
+		"POST /apps/app_1/webhook-routes/noodle/secret": {"secret", "app_1", "noodle"},
+	} {
+		api := newAPI(t).fail(key, 400, refused)
+		got := run(t, api, "", "app", append([]string{"webhook-route"}, args...)...)
+		require.Error(t, got.err, key)
+		require.NotContains(t, got.out, "Secret:")
+	}
+}
+
+// TestR194_APastedSecretIsAskedForNotPassedAsAFlag asserts a provider's secret
+// does not go through the command line.
+func TestR194_APastedSecretIsAskedForNotPassedAsAFlag(t *testing.T) {
+	api := newAPI(t).reply("POST /apps/app_1/webhook-routes", map[string]any{"revision": 4})
+	got := run(t, api, "whsec_from_the_provider\n", "app", "webhook-route", "add", "app_1", "noodle", "/hook",
+		"--header", "X-Sig", "--paste-secret")
+	require.NoError(t, got.err)
+	require.Contains(t, api.bodyFor("POST /apps/app_1/webhook-routes"), "whsec_from_the_provider")
+	require.NotContains(t, got.out, "whsec_from_the_provider")
+
+	got = run(t, newAPI(t), "", "app", "webhook-route", "add", "app_1", "noodle", "/hook",
+		"--header", "X-Sig", "--secret", "whsec_from_the_provider")
+	require.Error(t, got.err, "there is no flag to put it in")
+}

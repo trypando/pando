@@ -31,6 +31,9 @@ import (
 // certificate, and it signs the assertions it issues, so what these tests
 // check is what a real provider's response goes through.
 type signingIdP struct {
+	// tamper changes the assertion before it is signed.
+	tamper func(assertion *etree.Element)
+
 	key  *rsa.PrivateKey
 	cert *x509.Certificate
 }
@@ -91,6 +94,9 @@ func (p *signingIdP) issue(t *testing.T, requestID, nameID, format string, attrs
 
 	assertion := doc.Root().FindElement("./Assertion")
 	require.NotNil(t, assertion)
+	if p.tamper != nil {
+		p.tamper(assertion)
+	}
 	ctx := dsig.NewDefaultSigningContext(dsig.TLSCertKeyStore(tls.Certificate{
 		Certificate: [][]byte{p.cert.Raw}, PrivateKey: p.key, Leaf: p.cert,
 	}))
@@ -320,4 +326,30 @@ func TestSAMLOktaPresetIdentifiesPeopleByTheirOktaUserID(t *testing.T) {
 	s, err = signIn(t, a, p, "dana.scully@example.com", "", map[string][]string{"okta_user_id": {"00u1abcd"}})
 	require.NoError(t, err)
 	require.Equal(t, "00u1abcd", s.ExternalID)
+}
+
+// TestR043_SAMLRefusesASignedAssertionWithNoIssuer asserts the case GO-2026-6909
+// calls a panic is a refused sign-in here. The Issuer is left out before signing,
+// so the signature passes and the library reaches its check.
+func TestR043_SAMLRefusesASignedAssertionWithNoIssuer(t *testing.T) {
+	p := newSigningIdP(t)
+	p.tamper = func(assertion *etree.Element) {
+		assertion.RemoveChild(assertion.FindElement("./Issuer"))
+	}
+	_, err := signIn(t, signingAdapter(t, p, nil), p, "ada@example.test", "", nil)
+	require.Equal(t, errs.AuthInvalid, errs.CodeOf(err))
+	require.Contains(t, err.Error(), "issuer is not")
+}
+
+// TestR043_SAMLIgnoresANameIDFromAnotherNamespace asserts the other half of
+// GO-2026-6909: a NameID outside SAML's namespace names nobody, even signed.
+func TestR043_SAMLIgnoresANameIDFromAnotherNamespace(t *testing.T) {
+	p := newSigningIdP(t)
+	p.tamper = func(assertion *etree.Element) {
+		name := assertion.FindElement("./Subject/NameID")
+		name.Space = ""
+		name.CreateAttr("xmlns", "urn:example:foreign")
+	}
+	_, err := signIn(t, signingAdapter(t, p, nil), p, "admin@example.test", "", nil)
+	require.Error(t, err)
 }

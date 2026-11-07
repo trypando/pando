@@ -48,6 +48,10 @@ type AppSpec struct {
 	// (R-419, R-422). Left out of an app that says nothing, which is most.
 	Availability Availability `json:"availability,omitzero"`
 
+	// WebhookRoutes are the paths a verified delivery may reach without a
+	// Pando credential (R-425). Left out of an app with none, which is most.
+	WebhookRoutes []WebhookRoute `json:"webhook_routes,omitempty"`
+
 	// Warnings are carried, not resolved. A warning is never a blocker —
 	// blockers are PLAN_* errors.
 	Warnings []Warning `json:"warnings,omitempty"`

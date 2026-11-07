@@ -132,6 +132,14 @@ func (r *Retention) IdempotencyKeys(ctx context.Context, before time.Time, limit
 		    SELECT ctid FROM idempotency_keys WHERE created_at < $1 LIMIT $2)`, before, limit)
 }
 
+// WebhookDeliveries removes up to limit replay records past their expiry
+// (R-433). One past it already counts as absent, so this only frees the row.
+func (r *Retention) WebhookDeliveries(ctx context.Context, now time.Time, limit int) (int64, error) {
+	return r.exec(ctx, "webhook deliveries", `
+		DELETE FROM webhook_deliveries WHERE ctid IN (
+		    SELECT ctid FROM webhook_deliveries WHERE expires_at < $1 LIMIT $2)`, now, limit)
+}
+
 // SSOFlows removes up to limit sign-in flows that expired before before —
 // kept that long so a person arriving late at a failed sign-in can still be
 // told why — the one-time identifiers whose assertions have expired, and CLI

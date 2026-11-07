@@ -80,6 +80,7 @@ func Compare(old, next *AppSpec) Diff {
 	compareSlots(old, next, add)
 	compareWorkloads(old, next, add)
 	compareOperational(old, next, add)
+	compareWebhookRoutes(old, next, add)
 
 	sort.SliceStable(d.Changes, func(i, j int) bool {
 		return rank[d.Changes[i].Class] > rank[d.Changes[j].Class]

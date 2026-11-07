@@ -23,6 +23,7 @@ adding a fast path, you are adding a security hole.
  3. Session cookie, or a bearer token shaped like Pando's (tok_…); any other
     Authorization header is the app's own, ignored here and forwarded (credentials.go)
  4. Authenticate → Principal, or anonymous
+ 4a. Anonymous and matches a webhook route: verify → webhook principal, or 401 (R-425; webhook.go)
  5. CheckData(principal, app)        (principal carries pando_pass_* unlocks, R-075a)
       passcode required  → 302 /.pando/login?passcode=<app>
       denied + anonymous → 302 login
@@ -35,6 +36,7 @@ adding a fast path, you are adding a security hole.
     (and pando_* cookies and Pando-shaped bearer tokens, R-173)
  8. Set assertion + convenience headers
  9. Path mode: strip prefix, set X-Forwarded-Prefix (R-167)
+10a. HMAC webhook delivery: claim its signature, or answer 200 if accepted (R-433; webhook.go)
 10. Forward, stream unbuffered — through the runtime's Upstream.Dial when it gives one
     (the host agent on a multi-host Docker install, O-45). Steps 1–9 are done first, always.
 ```

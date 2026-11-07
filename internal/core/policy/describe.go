@@ -91,6 +91,8 @@ var descriptions = map[string]string{
 	"allow_private_webhooks": "Let event subscription webhooks send to private addresses — the local network, " +
 		"loopback, and link-local addresses such as a cloud metadata service. Off by default, because anyone who " +
 		"can see an app can subscribe to it.",
+	"disable_webhook_routes": "Turn off webhook routes: a plan declaring one is refused, and deliveries to those " +
+		"already deployed meet the app's ordinary access.",
 	"update_channel": "Which Pando releases the update check offers: stable (releases only) or prerelease " +
 		"(release candidates too).",
 	"upgrade_in_place": "Let Pando upgrade itself to a newer release from the Updates screen. Needs Pando's image " +

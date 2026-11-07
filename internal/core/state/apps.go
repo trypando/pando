@@ -868,6 +868,9 @@ func (a *Apps) CreateRevision(ctx context.Context, appID string, s *spec.AppSpec
 			var prev spec.AppSpec
 			if json.Unmarshal(prevBody, &prev) == nil {
 				spec.DropStalePin(&prev, s)
+				if err := dropStaleRouteSecrets(ctx, tx, appID, &prev); err != nil {
+					return Revision{}, err
+				}
 			}
 		}
 	}
@@ -1795,4 +1798,24 @@ func (a *Apps) WithAutoDeploy(ctx context.Context) ([]App, error) {
 		out = append(out, app)
 	}
 	return out, rows.Err()
+}
+
+// PinnedAndNewest are the app's pinned revision and its newest, either zero when
+// there is none.
+func (a *Apps) PinnedAndNewest(ctx context.Context, app App) (pinned, newest Revision, err error) {
+	if app.PinnedSpecID != "" {
+		if pinned, _, err = a.RevisionByID(ctx, app.PinnedSpecID); err != nil {
+			return
+		}
+	}
+	newest = pinned
+	list, err := a.ListRevisions(ctx, app.ID)
+	if err != nil || len(list) == 0 || list[0].ID == pinned.ID || list[0].Revision < pinned.Revision {
+		return
+	}
+	latest, found, err := a.RevisionByID(ctx, list[0].ID)
+	if err == nil && found {
+		newest = latest
+	}
+	return
 }
