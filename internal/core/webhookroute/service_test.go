@@ -286,7 +286,7 @@ func TestR427_AFailedWriteIsReturned(t *testing.T) {
 	gone := errors.New("database gone")
 	ctx := context.Background()
 
-	s, revs, keys, _ := service()
+	s, _, keys, _ := service()
 	s.Secrets = failing{secrets: keys, put: gone}
 	_, err := s.Add(ctx, who, app, route(), "")
 	require.ErrorIs(t, err, gone)
@@ -295,7 +295,7 @@ func TestR427_AFailedWriteIsReturned(t *testing.T) {
 	require.NoError(t, err, "a route left with no secret is given one")
 	require.NotNil(t, key)
 
-	s, revs, _, _ = service()
+	s, revs, _, _ := service()
 	_, err = s.Add(ctx, who, app, route(), "")
 	require.NoError(t, err)
 	s.Secrets = failing{secrets: secrets{}, put: gone}
