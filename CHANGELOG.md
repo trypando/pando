@@ -19,6 +19,8 @@ Unreleased above it. -->
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-11-06
+
 ### Security
 
 - Update `klauspost/compress` to 1.20.3, fixing a panic on two-block frames
@@ -1639,7 +1641,8 @@ review the proposal as usual.
 The first release. Its notes were generated from the commit log, which is what this file now exists
 to replace; see the release page for the artifact list.
 
-[Unreleased]: https://github.com/trypando/pando/compare/v0.18.0...main
+[Unreleased]: https://github.com/trypando/pando/compare/v0.19.0...main
+[0.19.0]: https://github.com/trypando/pando/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/trypando/pando/compare/v0.17.2...v0.18.0
 [0.17.2]: https://github.com/trypando/pando/compare/v0.17.1...v0.17.2
 [0.17.1]: https://github.com/trypando/pando/compare/v0.17.0...v0.17.1
