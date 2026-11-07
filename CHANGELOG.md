@@ -24,9 +24,11 @@ Unreleased above it. -->
 ### Security
 
 - Update `klauspost/compress` to 1.20.3, fixing a panic on two-block frames
-  ([GHSA-fpmh-frq8-7rj8](https://github.com/advisories/GHSA-fpmh-frq8-7rj8), CVE-2026-116591).
+  ([GHSA-fpmh-frq8-7rj8](https://github.com/advisories/GHSA-fpmh-frq8-7rj8), CVE-2026-116591). High
+  severity. Affects Pando 0.1.0 through 0.18.0.
 - Update `crewjam/saml` to 0.5.2, fixing `NameID` spoofing from a foreign XML namespace in a signed
-  assertion (GO-2026-6909).
+  assertion ([GO-2026-6909](https://pkg.go.dev/vuln/GO-2026-6909)). No published severity. It needs an
+  assertion the configured provider signed. Affects Pando 0.4.0 through 0.18.0 with SAML sign-in configured.
 
 ### Added
 
