@@ -19,6 +19,23 @@ Unreleased above it. -->
 
 ## [Unreleased]
 
+## [0.19.1] - 2026-11-09
+
+### Security
+
+No new advisories.
+
+### Changed
+
+- **Dependencies are updated** (#389, #392). Among them: `jackc/pgx` 5.12.0, `go-jose` 4.1.9,
+  `moby/buildkit` 0.34.2, `docker/cli` 29.9.3, `cel-go` 0.33.2 and the AWS SDK used by the S3 backup
+  and ECR registry options.
+- **Builder base images and bundled images are refreshed** (#381, #383, #386, #393, #382, #384). The
+  static site server (`nginx:1.30-alpine`) and the compiled program runtime (`debian:trixie-slim`)
+  are pinned to their current digests, as are Pando's own image, Postgres in `docker-compose.yml`,
+  the registry in `docker-compose.registry.yml` and BuildKit in the Kubernetes manifest, now
+  `v0.34.2-rootless`. An app picks up the new base on its next deploy.
+
 ## [0.19.0] - 2026-11-06
 
 ### Security
