@@ -49,10 +49,11 @@ updates:
       # check in the workflow ran. The pull request is not reviewable — it is
       # red for a reason that has nothing to do with the change.
       #
-      # A dependency joins the FIRST group whose patterns match, so these are
-      # listed before the catch-all below. That ordering is what lets them claim
-      # their packages for every update type, major included, and leaves the
-      # catch-all holding everything else.
+      # Order alone does not keep a package in its group: #385 put
+      # @vitest/coverage-v8 5.1.0 in the catch-all while #380 put vitest 5.1.0
+      # in this group, and each failed `npm ci` without the other. The catch-all
+      # below excludes every pattern listed here, so these groups are the only
+      # place their packages can go.
       vite:
         patterns:
           - vite
@@ -85,6 +86,22 @@ updates:
           - '@xterm/*'
       console-minor-and-patch:
         update-types: [minor, patch]
+        # Every pattern of the groups above. Add to both places together.
+        exclude-patterns:
+          - vite
+          - '@vitejs/*'
+          - vitest
+          - '@vitest/*'
+          - eslint
+          - 'eslint-*'
+          - '@typescript-eslint/*'
+          - typescript
+          - oxlint
+          - react
+          - react-dom
+          - '@types/react'
+          - '@types/react-dom'
+          - '@xterm/*'
     # Grouping is not enough when the group has no version that agrees with
     # itself. These two majors have no installable combination at all, so
     # Dependabot proposes half the move and `npm ci` refuses the result — a
