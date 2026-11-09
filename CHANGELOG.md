@@ -23,7 +23,12 @@ Unreleased above it. -->
 
 ### Security
 
-No new advisories.
+- Update the BuildKit that Pando runs for builds to 0.34.2, fixing a daemon crash from a build that
+  resolves the same Git source twice
+  ([GHSA-2fqp-xg6f-v7gj](https://github.com/moby/buildkit/security/advisories/GHSA-2fqp-xg6f-v7gj),
+  CVE-2026-121522). Medium severity. A crash stops builds in progress; Pando starts BuildKit again for
+  the next one. Affects Pando 0.4.0 through 0.19.0, and the BuildKit in the Kubernetes manifest
+  shipped with them.
 
 ### Changed
 
@@ -34,7 +39,8 @@ No new advisories.
   static site server (`nginx:1.30-alpine`) and the compiled program runtime (`debian:trixie-slim`)
   are pinned to their current digests, as are Pando's own image, Postgres in `docker-compose.yml`,
   the registry in `docker-compose.registry.yml` and BuildKit in the Kubernetes manifest, now
-  `v0.34.2-rootless`. An app picks up the new base on its next deploy.
+  `v0.34.2-rootless`. An app whose build Pando wrote keeps the base its stored plan names until
+  detection runs again (`pando app detection rerun`) and the new proposal is accepted.
 
 ## [0.19.0] - 2026-11-06
 
@@ -1660,7 +1666,8 @@ review the proposal as usual.
 The first release. Its notes were generated from the commit log, which is what this file now exists
 to replace; see the release page for the artifact list.
 
-[Unreleased]: https://github.com/trypando/pando/compare/v0.19.0...main
+[Unreleased]: https://github.com/trypando/pando/compare/v0.19.1...main
+[0.19.1]: https://github.com/trypando/pando/compare/v0.19.0...v0.19.1
 [0.19.0]: https://github.com/trypando/pando/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/trypando/pando/compare/v0.17.2...v0.18.0
 [0.17.2]: https://github.com/trypando/pando/compare/v0.17.1...v0.17.2

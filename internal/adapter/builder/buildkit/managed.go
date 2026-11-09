@@ -50,10 +50,10 @@ import (
 // the host's.
 
 // managedImage is the BuildKit Pando starts, pinned by digest: the bytes this
-// version of Pando was built and tested against. v0.34.1, the line Pando's own
+// version of Pando was built and tested against. v0.34.2, the line Pando's own
 // BuildKit client is on. Dependabot does not read Go constants; bump it with
 // the client in go.mod.
-const managedImage = "moby/buildkit:v0.34.1-rootless@sha256:f68752a5a94acfcdad2d07867b7075601a421638e17fc5f28efc1c814d0c4f89"
+const managedImage = "moby/buildkit:v0.34.2-rootless@sha256:c8252268760e1baba80780d63d738ef9f260fb7c7c0973c78494cb9ddd99eda1"
 
 // Where a daemon finds its TLS material, under the BuildKit user's home.
 const (
