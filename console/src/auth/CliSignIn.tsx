@@ -61,7 +61,7 @@ export function cliRequest(search: string): CliRequest | null {
 }
 
 /** Whether `pando token create` opened the page, rather than `pando login`. */
-export function forToken(search: string): boolean {
+function forToken(search: string): boolean {
   return new URLSearchParams(search).get('for') === 'token';
 }
 
