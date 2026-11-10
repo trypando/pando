@@ -468,6 +468,15 @@ machine with no browser — over SSH, in a container. The device authorization g
 the same with a code typed into the console, and is not offered: it is the flow device-code phishing
 uses, and pasting a code back into the terminal one is using needs nothing new on the server.
 
+**[D] `pando token create` is approved the same way** (issue #396). The CLI holds only a token, and a
+token cannot mint a token, so a token it prints rather than stores goes through this flow under the name
+given. Its address adds `for=token`, which only the console's page reads, to word the approval as a token rather than a sign-in, and the browser is sent back to `/admin/cli?created=1`, which says only that it was approved: the CLI's collection can still fail. With `--service` the address and
+the approval carry `kind=service`: the person approving must hold `install.tokens.manage` when they
+approve and again when the CLI collects, and the token minted is a service token with no owner
+(R-060), recorded in the audit log as made by the session that approved it, as POST /tokens/service
+records it. `cli_sign_ins.token_kind` keeps which kind an approval makes. `--username` takes the other
+road: a password session for one call to POST /tokens or POST /tokens/service, ended afterwards.
+
 **Not here.** An MCP client of Pando's own endpoint signs in by §3.6, the same flow with the client's
 redirect address in place of the loopback port; `pando mcp` uses the token this flow stores (R-262).
 

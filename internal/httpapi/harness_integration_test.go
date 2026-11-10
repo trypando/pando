@@ -226,6 +226,7 @@ func newInstallWith(t *testing.T, overlay *corepolicy.Overlay, startup *config.C
 		CLISignIn: &clisignin.Service{
 			Store: state.NewCLISignIns(db), Users: users, Tokens: tokens,
 			Policy: effectivePolicy, Clock: clock.System{},
+			MayCreateServiceTokens: clisignin.ServiceTokenCheck(users, authzStore, authorizer),
 		},
 		OAuth: &oauth.Service{
 			Clients: state.NewOAuthClients(db), Codes: state.NewOAuthCodes(db), Users: users,

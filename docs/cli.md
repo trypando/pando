@@ -1244,6 +1244,7 @@ pando grant add <app>
 | `--passcode` |  | with --anyone: only those who enter this passcode |
 | `--plane` | `data` | data (use the app) or control (manage it) |
 | `--role` |  | role ID, for control-plane grants |
+| `--token` |  | service token ID to share with |
 | `--user` |  | user ID to share with |
 
 #### `grant list`
@@ -2114,19 +2115,46 @@ pando subscriptions update <subscription-id>
 
 ### `token`
 
-Manage your API tokens
+Manage API tokens
 
 ```
 pando token
 ```
 
+#### `token create`
+
+Create a token and print its secret
+
+```
+pando token create <name>
+```
+
+Creates a delegated token, which acts as you, or with --service a service token, which is
+its own principal and reaches only the apps shared with it (pando grant add --token).
+A service token needs install.tokens.manage.
+
+You approve it in the browser, as with pando login; --no-browser prints the address to
+open elsewhere, and --username asks for a password instead.
+
+The secret alone goes to standard output, and is shown only this once.
+
+| Flag | Default | What it does |
+| --- | --- | --- |
+| `--no-browser` |  | print the address to open on another computer, and paste the code it shows |
+| `--service` |  | create a service token, its own principal |
+| `--username` |  | approve with this username and a password instead of a browser |
+
 #### `token list`
 
-List your tokens
+List your tokens, or the installation's service tokens
 
 ```
 pando token list
 ```
+
+| Flag | Default | What it does |
+| --- | --- | --- |
+| `--service` |  | the installation's service tokens |
 
 #### `token revoke`
 

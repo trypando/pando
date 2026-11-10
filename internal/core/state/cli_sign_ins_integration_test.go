@@ -36,6 +36,7 @@ func TestR406_ACLISignInIsTakenOnceAndExpiredOnesAreRemoved(t *testing.T) {
 	require.Equal(t, ada.ID, got.UserID)
 	require.Equal(t, challenge, got.CodeChallenge)
 	require.Equal(t, "laptop CLI", got.TokenName)
+	require.Equal(t, state.TokenDelegated, got.TokenKind, "delegated unless asked otherwise")
 
 	_, found, err = store.Take(ctx, "live")
 	require.NoError(t, err)
@@ -62,4 +63,27 @@ func TestR406_ACLISignInIsTakenOnceAndExpiredOnesAreRemoved(t *testing.T) {
 	_, found, err = store.Take(ctx, "kept")
 	require.NoError(t, err)
 	require.True(t, found, "still in its 5 minutes: kept")
+}
+
+// TestR060_ACLISignInKeepsTheKindOfTokenItMakes asserts the storage behind
+// pando token create --service (issue #396): an approval for a service token
+// says so when it is taken, and the schema refuses any other kind.
+func TestR060_ACLISignInKeepsTheKindOfTokenItMakes(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	db := connected(t)
+	store := state.NewCLISignIns(db)
+	ada := seedUser(t, db, "ada")
+	approval := state.CLISignIn{CodeHash: "service", UserID: ada.ID, ApprovedBy: ada.ID,
+		CodeChallenge: strings.Repeat("b", 43), TokenName: "nightly agent",
+		TokenKind: state.TokenAccount, ExpiresAt: time.Now().UTC().Add(5 * time.Minute)}
+	require.NoError(t, store.Create(ctx, approval))
+
+	got, found, err := store.Take(ctx, "service")
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, state.TokenAccount, got.TokenKind)
+
+	approval.CodeHash, approval.TokenKind = "admin", "admin"
+	require.Error(t, store.Create(ctx, approval), "the schema refuses an unknown kind")
 }

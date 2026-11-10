@@ -19,6 +19,15 @@ Unreleased above it. -->
 
 ## [Unreleased]
 
+### Added
+
+- **The CLI creates tokens and shares apps with service tokens** (#396). `pando token create <name>`
+  makes a delegated token and `--service` a service token, approved in the browser as `pando login`
+  is, or with `--username` and a password; the secret is printed once. `pando token list --service`
+  lists service tokens, and `pando grant add <app> --token <id>` shares an app with one. Host policy
+  still denies `app.grants.manage` to tokens by default, so `grant add` from the CLI needs that
+  lifted under `agent_disabled_verbs`.
+
 ## [0.19.1] - 2026-11-09
 
 ### Security

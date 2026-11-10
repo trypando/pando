@@ -6659,7 +6659,7 @@
       "post": {
         "operationId": "approveCLISignIn",
         "summary": "Approve a CLI sign-in",
-        "description": "Let the CLI that opened this browser sign in as you: the console's approval page sends on what `pando login` put in its address — `code_challenge` (base64url SHA-256 of the CLI's verifier), `code_challenge_method` (`S256`), `name` (the token's) and `port`, the loopback port the CLI listens on, with `state`; or `port` 0 when the code will be pasted. Answers with a one-time `code`, valid 5 minutes, and `redirect_url`, the CLI's `http://127.0.0.1:{port}/callback` address carrying it, empty when pasted. A session only: a token cannot approve.",
+        "description": "Let the CLI that opened this browser sign in as you: the console's approval page sends on what `pando login` put in its address — `code_challenge` (base64url SHA-256 of the CLI's verifier), `code_challenge_method` (`S256`), `name` (the token's) and `port`, the loopback port the CLI listens on, with `state`; or `port` 0 when the code will be pasted; and `kind`, `service` for a service token (`pando token create --service`, which needs install.tokens.manage) or absent for a delegated one. Answers with a one-time `code`, valid 5 minutes, and `redirect_url`, the CLI's `http://127.0.0.1:{port}/callback` address carrying it, empty when pasted. A session only: a token cannot approve.",
         "tags": [
           "Session"
         ],
@@ -6710,7 +6710,7 @@
       "post": {
         "operationId": "exchangeCLISignIn",
         "summary": "Collect a CLI sign-in",
-        "description": "Trade an approved sign-in's `code` and the `code_verifier` behind its challenge for a delegated token acting as whoever approved it, bounded by their live grants and host policy's token lifetime. Answers with `token`, `secret` (shown once) and `username`. A code is tried once: any attempt spends it, so a wrong verifier ends the sign-in. Public: the verifier is the proof.",
+        "description": "Trade an approved sign-in's `code` and the `code_verifier` behind its challenge for the token it approved: a delegated token acting as whoever approved it, bounded by their live grants, or a service token when the approval asked for one and the approver still holds install.tokens.manage; either under host policy's token lifetime. Answers with `token`, `secret` (shown once) and `username`. A code is tried once: any attempt spends it, so a wrong verifier ends the sign-in. Public: the verifier is the proof.",
         "tags": [
           "Session"
         ],
@@ -14897,6 +14897,9 @@
             "format": "int64"
           },
           "state": {
+            "type": "string"
+          },
+          "kind": {
             "type": "string"
           }
         },

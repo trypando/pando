@@ -7,6 +7,7 @@ import (
 	"github.com/trypando/pando/internal/core/audit"
 	"github.com/trypando/pando/internal/core/authz"
 	"github.com/trypando/pando/internal/core/clisignin"
+	"github.com/trypando/pando/internal/core/state"
 	"github.com/trypando/pando/internal/errs"
 )
 
@@ -56,7 +57,7 @@ func (s *Server) handleApproveCLISignIn(w http.ResponseWriter, r *http.Request) 
 	s.audit(r, audit.Event{
 		PrincipalKind: audit.PrincipalKind(p.Kind), PrincipalID: p.ID, OnBehalfOf: p.UserID,
 		Action: "cli_sign_in.approve", TargetKind: "user", TargetID: p.UserID,
-		Detail: map[string]any{"name": req.Name, "delivery": delivery},
+		Detail: map[string]any{"name": req.Name, "delivery": delivery, "kind": kindOr(req.Kind)},
 	})
 
 	// The code, once. Revealed deliberately, as a token's secret is: it is
@@ -98,19 +99,23 @@ func (s *Server) handleExchangeCLISignIn(w http.ResponseWriter, r *http.Request)
 			s.audit(r, audit.Event{
 				PrincipalKind: audit.KindAnonymous, Action: "cli_sign_in.denied",
 				TargetKind: "user", TargetID: got.UserID,
-				Detail: map[string]any{"name": got.Name, "approved_by": got.ApprovedBy},
+				Detail: map[string]any{"name": got.Name, "approved_by": got.ApprovedBy, "kind": got.Kind},
 			})
 		}
 		Error(w, r, err)
 		return
 	}
 
-	// Made by the person who approved it, as POST /tokens records it, from
-	// the address the CLI connected from.
+	// Made by the person who approved it, as POST /tokens and POST
+	// /tokens/service record it, from the address the CLI connected from.
+	detail := map[string]any{"name": got.Name, "via": "cli_sign_in", "approved_by": got.ApprovedBy}
+	if got.Kind == clisignin.KindService {
+		detail["kind"] = state.TokenAccount
+	}
 	s.audit(r, audit.Event{
 		PrincipalKind: audit.KindUser, PrincipalID: got.UserID, OnBehalfOf: got.UserID,
 		Action: "token.create", TargetKind: "token", TargetID: got.Issued.Token.ID,
-		Detail: map[string]any{"name": got.Name, "via": "cli_sign_in", "approved_by": got.ApprovedBy},
+		Detail: detail,
 	})
 
 	w.Header().Set("Cache-Control", "no-store")
@@ -119,4 +124,12 @@ func (s *Server) handleExchangeCLISignIn(w http.ResponseWriter, r *http.Request)
 		"secret":   got.Issued.Secret.Reveal(),
 		"username": got.Username,
 	})
+}
+
+// kindOr is the kind of token an approval asks for, as the audit log names it.
+func kindOr(kind string) string {
+	if kind == "" {
+		return clisignin.KindDelegated
+	}
+	return kind
 }

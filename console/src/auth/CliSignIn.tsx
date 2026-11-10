@@ -1,6 +1,8 @@
 // Approving a CLI sign-in (R-406, design 06 §3.5).
 //
-// `pando login` opens this page with a PKCE challenge in its address. The
+// `pando login` opens this page with a PKCE challenge in its address, and so
+// does `pando token create`, which asks for a named token to print rather than
+// store — with `kind=service`, a service token (R-060, issue #396). The
 // person is signed in here however their account signs in — this is the only
 // way an account from an identity provider gets the CLI a token — and either
 // approves or cancels. Approving sends the browser to the CLI's loopback
@@ -27,6 +29,8 @@ export interface CliRequest {
   /** The CLI's loopback port, or 0 when the code is pasted. */
   port: number;
   state: string;
+  /** `service` for a service token; absent for a delegated one. */
+  kind?: 'service';
 }
 
 interface Approved {
@@ -45,19 +49,27 @@ export function cliRequest(search: string): CliRequest | null {
   const rawPort = q.get('port');
   const port = rawPort === null ? 0 : Number(rawPort);
   if (challenge === '' || name === '' || !Number.isInteger(port)) return null;
-  return {
+  const req: CliRequest = {
     code_challenge: challenge,
     code_challenge_method: q.get('code_challenge_method') ?? '',
     name,
     port,
     state: q.get('state') ?? '',
   };
+  if (q.get('kind') === 'service') req.kind = 'service';
+  return req;
+}
+
+/** Whether `pando token create` opened the page, rather than `pando login`. */
+function forToken(search: string): boolean {
+  return new URLSearchParams(search).get('for') === 'token';
 }
 
 /** Where the CLI sent the browser back to say how it ended, if it did. */
-export function outcome(search: string): 'signed_in' | 'canceled' | null {
+export function outcome(search: string): 'signed_in' | 'created' | 'canceled' | null {
   const q = new URLSearchParams(search);
   if (q.get('signed_in') === '1') return 'signed_in';
+  if (q.get('created') === '1') return 'created';
   if (q.get('canceled') === '1') return 'canceled';
   return null;
 }
@@ -141,6 +153,9 @@ export function CliSignIn({
       <Ended heading="The CLI is signed in" lede="Go back to your terminal. You can close this tab." />
     );
   }
+  if (ended === 'created') {
+    return <Ended heading="Approved" lede="Go back to your terminal. You can close this tab." />;
+  }
   if (ended === 'canceled' || canceled) {
     return (
       <Ended
@@ -176,14 +191,22 @@ export function CliSignIn({
   }
 
   const who = username ? `as ${username}` : 'as you';
+  const service = req.kind === 'service';
+  const token = service || forToken(search);
+  let heading = 'Sign in the CLI';
+  let lede = `“${req.name}” is asking to sign in to Pando ${who}. It gets a token that can do everything you can, until you revoke it under API and tools.`;
+  if (service) {
+    heading = 'Create a service token';
+    lede = `“${req.name}” will reach only the apps shared with it, until it is revoked under API and tools.`;
+  } else if (token) {
+    heading = 'Create a token';
+    lede = `“${req.name}” will act ${who} and can do everything you can, until you revoke it under API and tools.`;
+  }
   return (
-    <Frame
-      heading="Sign in the CLI"
-      lede={`“${req.name}” is asking to sign in to Pando ${who}. It gets a token that can do everything you can, until you revoke it under API and tools.`}
-    >
+    <Frame heading={heading} lede={lede}>
       <div style={stack}>
         <p style={{ font: 'var(--type-body-ui)', color: 'var(--ink-secondary)', margin: 0 }}>
-          Approve only if you ran pando login yourself just now.
+          Approve only if you ran {token ? 'pando token create' : 'pando login'} yourself just now.
         </p>
         {approve.isError && <Banner tone="failed">{withRemedy(approve.error)}</Banner>}
         <Button

@@ -15,6 +15,13 @@
 //  3. The CLI trades the code and the verifier for a delegated token
 //     (Exchange).
 //
+// `pando token create` uses the same approval to mint a token it prints rather
+// than stores (issue #396): the CLI only ever holds a token, and a token
+// cannot mint a token, so a signed-in person approves each one. With
+// KindService the token is a service token (R-060) rather than a delegated
+// one, and the person approving must hold install.tokens.manage both when they
+// approve and when the CLI collects it.
+//
 // The code alone is worth nothing: a code that reaches the wrong hands — a
 // link sent to someone, a page that read the loopback redirect — cannot be
 // traded without the verifier, which never left the process that started the
@@ -64,9 +71,9 @@ type TokenMinter interface {
 	Create(ctx context.Context, kind, name, ownerUserID, createdBy string, expiresAt *time.Time) (state.Issued, error)
 }
 
-// Service approves CLI sign-ins and trades them for tokens. It decides
-// nothing about who is asking: the caller has established that a signed-in
-// person, not a token, approved, and audits what happened.
+// Service approves CLI sign-ins and trades them for tokens. The caller has
+// established that a signed-in person, not a token, approved, and audits what
+// happened.
 type Service struct {
 	Store  Store
 	Users  AccountReader
@@ -75,7 +82,21 @@ type Service struct {
 		Load(ctx context.Context) (policy.Document, error)
 	}
 	Clock clock.Clock
+
+	// MayCreateServiceTokens refuses an account that may not create service
+	// tokens (install.tokens.manage, R-060). Nil refuses every service token.
+	MayCreateServiceTokens func(ctx context.Context, userID string) error
 }
+
+// The kinds of token an approval makes.
+const (
+	// KindDelegated acts as the person who approved it (R-058). The default.
+	KindDelegated = "delegated"
+
+	// KindService is its own principal, holding only what is shared with it
+	// (R-060).
+	KindService = "service"
+)
 
 // Request is what the CLI put in the address it opened, as the console sends
 // it on.
@@ -94,6 +115,9 @@ type Request struct {
 	// State is echoed to the CLI's loopback address, so it can tell its own
 	// sign-in's answer from any other request that reaches the port.
 	State string `json:"state"`
+
+	// Kind is KindDelegated, or empty for it, or KindService.
+	Kind string `json:"kind,omitempty"`
 }
 
 // Approved is an approval's one-time code and where the browser takes it.
@@ -118,6 +142,9 @@ type Exchanged struct {
 	// ApprovedBy is the session that approved it.
 	ApprovedBy string
 	Name       string
+
+	// Kind is KindDelegated or KindService.
+	Kind string
 }
 
 var (
@@ -138,6 +165,9 @@ func invalid(message string) error {
 
 // validate checks a request and returns its token name, trimmed.
 func validate(req Request) (string, error) {
+	if req.Kind != "" && req.Kind != KindDelegated && req.Kind != KindService {
+		return "", invalid(fmt.Sprintf("This CLI sign-in asks for a %q token. Pando makes delegated and service tokens.", req.Kind))
+	}
 	if req.CodeChallengeMethod != "S256" {
 		return "", invalid("This CLI sign-in asks for a code challenge method other than S256, the only one Pando accepts.")
 	}
@@ -179,6 +209,13 @@ func (s *Service) Approve(ctx context.Context, userID, approvedBy string, req Re
 	if err := s.usable(ctx, userID); err != nil {
 		return Approved{}, err
 	}
+	kind := state.TokenDelegated
+	if req.Kind == KindService {
+		if err := s.mayCreateServiceTokens(ctx, userID); err != nil {
+			return Approved{}, err
+		}
+		kind = state.TokenAccount
+	}
 
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
@@ -189,7 +226,7 @@ func (s *Service) Approve(ctx context.Context, userID, approvedBy string, req Re
 
 	if err := s.Store.Create(ctx, state.CLISignIn{
 		CodeHash: Digest(code), UserID: userID, ApprovedBy: approvedBy,
-		CodeChallenge: req.CodeChallenge, TokenName: name, ExpiresAt: expires,
+		CodeChallenge: req.CodeChallenge, TokenName: name, TokenKind: kind, ExpiresAt: expires,
 	}); err != nil {
 		return Approved{}, err
 	}
@@ -214,8 +251,8 @@ func spent() error {
 		WithRemedy("Run pando login again. A code works once, within 5 minutes of being approved, and only in the pando login that opened the browser.")
 }
 
-// Exchange trades a code and the verifier behind its challenge for a
-// delegated token. The approval is gone whatever the outcome. When a code
+// Exchange trades a code and the verifier behind its challenge for the token
+// it was approved for. The approval is gone whatever the outcome. When a code
 // that named an approval is refused, the Exchanged returned with the error
 // says whose it was (UserID, ApprovedBy, Name); for any other refusal it is
 // empty.
@@ -235,7 +272,11 @@ func (s *Service) Exchange(ctx context.Context, code, verifier string) (Exchange
 	// audits that, and only that. A code that matched nothing is refused
 	// without a trace, so nobody can grow the audit log by posting guesses
 	// to a public endpoint; every approval took a signed-in person to make.
-	refused := Exchanged{UserID: approval.UserID, ApprovedBy: approval.ApprovedBy, Name: approval.TokenName}
+	kind := KindDelegated
+	if approval.TokenKind == state.TokenAccount {
+		kind = KindService
+	}
+	refused := Exchanged{UserID: approval.UserID, ApprovedBy: approval.ApprovedBy, Name: approval.TokenName, Kind: kind}
 	if !s.Clock.Now().Before(approval.ExpiresAt) ||
 		subtle.ConstantTimeCompare([]byte(Challenge(verifier)), []byte(approval.CodeChallenge)) != 1 {
 		return refused, spent()
@@ -247,19 +288,37 @@ func (s *Service) Exchange(ctx context.Context, code, verifier string) (Exchange
 		return refused, err
 	}
 
+	// A service token belongs to nobody (R-060), so the person who approved
+	// it is not its owner; and they may have lost the verb since.
+	owner, tokenKind := user.ID, state.TokenDelegated
+	if kind == KindService {
+		if err := s.mayCreateServiceTokens(ctx, user.ID); err != nil {
+			return refused, err
+		}
+		owner, tokenKind = "", state.TokenAccount
+	}
+
 	doc, err := s.Policy.Load(ctx)
 	if err != nil {
 		return Exchanged{}, err
 	}
-	issued, err := s.Tokens.Create(ctx, state.TokenDelegated, approval.TokenName, user.ID,
+	issued, err := s.Tokens.Create(ctx, tokenKind, approval.TokenName, owner,
 		approval.ApprovedBy, doc.TokenExpiry(s.Clock.Now()))
 	if err != nil {
 		return Exchanged{}, err
 	}
 	return Exchanged{
 		Issued: issued, UserID: user.ID, Username: user.ExternalID,
-		ApprovedBy: approval.ApprovedBy, Name: approval.TokenName,
+		ApprovedBy: approval.ApprovedBy, Name: approval.TokenName, Kind: kind,
 	}, nil
+}
+
+func (s *Service) mayCreateServiceTokens(ctx context.Context, userID string) error {
+	if s.MayCreateServiceTokens == nil {
+		return errs.New(errs.PermDenied, "This installation does not create service tokens from the CLI.").
+			WithRemedy("Create the service token in the console, under API and tools.")
+	}
+	return s.MayCreateServiceTokens(ctx, userID)
 }
 
 func (s *Service) usable(ctx context.Context, userID string) error {
