@@ -24,6 +24,9 @@ rules for writing an app that runs well here, and for doing it safely.
 - Each request carries a signed JWT in `X-Pando-Assertion`. To know who is asking, verify it against
   the keys at `/.well-known/jwks.json` on Pando's address, and check that `aud` is this app's ID.
 - Key a user's data on the `sub` claim. It does not change when a person's email does.
+- To decide what someone may do by group, read the `groups` claim of the verified assertion. It
+  holds group IDs such as `grp_01HQ8…`, not names; read the ID from configuration, such as
+  `ADMIN_GROUP`, rather than writing it into the code.
 - `X-Pando-User`, `X-Pando-Email` and `X-Pando-Groups` are not verified. Use them for display, never
   to decide what someone may do.
 - In an app shared publicly, every visitor's `sub` is `anonymous`. Set your own cookie if the app
