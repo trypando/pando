@@ -3839,6 +3839,14 @@
           "required": false
         },
         {
+          "name": "token",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "service token ID to share with",
+          "required": false
+        },
+        {
           "name": "user",
           "shorthand": "",
           "type": "string",
@@ -6978,7 +6986,7 @@
     {
       "path": "pando token",
       "use": "token",
-      "short": "Manage your API tokens",
+      "short": "Manage API tokens",
       "long": "",
       "example": "",
       "aliases": [],
@@ -7005,20 +7013,85 @@
         }
       ],
       "subcommands": [
+        "pando token create",
         "pando token list",
         "pando token revoke"
       ]
     },
     {
+      "path": "pando token create",
+      "use": "create <name>",
+      "short": "Create a token and print its secret",
+      "long": "Creates a delegated token, which acts as you, or with --service a service token, which is\nits own principal and reaches only the apps shared with it (pando grant add --token).\nA service token needs install.tokens.manage.\n\nYou approve it in the browser, as with pando login; --no-browser prints the address to\nopen elsewhere, and --username asks for a password instead.\n\nThe secret alone goes to standard output, and is shown only this once.",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "no-browser",
+          "shorthand": "",
+          "type": "bool",
+          "default": "false",
+          "usage": "print the address to open on another computer, and paste the code it shows",
+          "required": false
+        },
+        {
+          "name": "service",
+          "shorthand": "",
+          "type": "bool",
+          "default": "false",
+          "usage": "create a service token, its own principal",
+          "required": false
+        },
+        {
+          "name": "username",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "approve with this username and a password instead of a browser",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
       "path": "pando token list",
       "use": "list",
-      "short": "List your tokens",
+      "short": "List your tokens, or the installation's service tokens",
       "long": "",
       "example": "",
       "aliases": [],
       "hidden": false,
       "deprecated": "",
-      "flags": [],
+      "flags": [
+        {
+          "name": "service",
+          "shorthand": "",
+          "type": "bool",
+          "default": "false",
+          "usage": "the installation's service tokens",
+          "required": false
+        }
+      ],
       "inherited_flags": [
         {
           "name": "config",

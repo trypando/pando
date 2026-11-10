@@ -43,6 +43,9 @@ describe('reading the address', () => {
       state: 'state-0123456789abcdef',
     });
     expect(cliRequest(pasted)?.port).toBe(0);
+    expect(cliRequest(search)?.kind).toBeUndefined();
+    expect(cliRequest(`${search}&kind=service`)?.kind).toBe('service');
+    expect(cliRequest(`${search}&kind=admin`)?.kind).toBeUndefined();
   });
 
   it('is not a request without a challenge, a name or a whole port', () => {
@@ -54,6 +57,7 @@ describe('reading the address', () => {
 
   it('says how it ended', () => {
     expect(outcome('?signed_in=1')).toBe('signed_in');
+    expect(outcome('?created=1')).toBe('created');
     expect(outcome('?canceled=1')).toBe('canceled');
     expect(outcome(search)).toBeNull();
   });
@@ -150,6 +154,28 @@ describe('the approval page', () => {
     screen.unmount();
     screen = mount(<CliSignIn search="?canceled=1" />);
     expect(screen.text()).toContain('the CLI stored nothing');
+  });
+
+  // R-060, issue #396: pando token create --service asks for a service token.
+  it('asks to approve a service token for pando token create --service', async () => {
+    const redirect = 'http://127.0.0.1:49152/callback?code=c&state=state-0123456789abcdef';
+    serve(() => reply({ code: 'c', redirect_url: redirect }, 201));
+    const navigate = vi.fn();
+    const asService = search.replace('laptop+CLI', 'nightly+agent') + '&kind=service';
+    screen = mount(<CliSignIn username="ada" search={asService} navigate={navigate} />);
+
+    expect(screen.text()).toContain('Create a service token');
+    expect(screen.text()).toContain('“nightly agent” will reach only the apps shared with it');
+    expect(screen.text()).toContain('Approve only if you ran pando token create yourself just now.');
+
+    await screen.press('Approve');
+    await vi.waitFor(() => expect(navigate).toHaveBeenCalledWith(redirect));
+    expect(sent[0]?.body).toMatchObject({ name: 'nightly agent', kind: 'service' });
+  });
+
+  it('says a token was made when pando token create sends the browser back', () => {
+    screen = mount(<CliSignIn search="?created=1" />);
+    expect(screen.text()).toContain('Token created');
   });
 
   it('explains an address pando login did not make', () => {

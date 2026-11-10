@@ -18,8 +18,12 @@ type CLISignIn struct {
 	ApprovedBy    string
 	CodeChallenge string
 	TokenName     string
-	CreatedAt     time.Time
-	ExpiresAt     time.Time
+
+	// TokenKind is what the approval mints: TokenDelegated, acting as UserID
+	// (R-058), or TokenAccount, its own principal (R-060).
+	TokenKind string
+	CreatedAt time.Time
+	ExpiresAt time.Time
 }
 
 // CLISignIns stores approvals.
@@ -30,10 +34,14 @@ func NewCLISignIns(db *DB) *CLISignIns { return &CLISignIns{db: db} }
 // Create stores an approval. Expired ones are removed by the retention job
 // (Retention.SSOFlows), not here, as with sign-in flows.
 func (c *CLISignIns) Create(ctx context.Context, s CLISignIn) error {
+	kind := s.TokenKind
+	if kind == "" {
+		kind = TokenDelegated
+	}
 	_, err := c.db.Exec(ctx, `
-		INSERT INTO cli_sign_ins (code_hash, user_id, approved_by, code_challenge, token_name, expires_at)
-		VALUES ($1, $2, $3, $4, $5, $6)`,
-		s.CodeHash, s.UserID, s.ApprovedBy, s.CodeChallenge, s.TokenName, s.ExpiresAt)
+		INSERT INTO cli_sign_ins (code_hash, user_id, approved_by, code_challenge, token_name, token_kind, expires_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		s.CodeHash, s.UserID, s.ApprovedBy, s.CodeChallenge, s.TokenName, kind, s.ExpiresAt)
 	if err != nil {
 		return errs.Wrap(errs.Internal, "Could not record the CLI sign-in.", err)
 	}
@@ -47,8 +55,8 @@ func (c *CLISignIns) Take(ctx context.Context, codeHash string) (CLISignIn, bool
 	var s CLISignIn
 	err := c.db.QueryRow(ctx, `
 		DELETE FROM cli_sign_ins WHERE code_hash = $1
-		RETURNING code_hash, user_id, approved_by, code_challenge, token_name, created_at, expires_at`,
-		codeHash).Scan(&s.CodeHash, &s.UserID, &s.ApprovedBy, &s.CodeChallenge, &s.TokenName,
+		RETURNING code_hash, user_id, approved_by, code_challenge, token_name, token_kind, created_at, expires_at`,
+		codeHash).Scan(&s.CodeHash, &s.UserID, &s.ApprovedBy, &s.CodeChallenge, &s.TokenName, &s.TokenKind,
 		&s.CreatedAt, &s.ExpiresAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return CLISignIn{}, false, nil

@@ -1221,10 +1221,13 @@ func serve(ctx context.Context, configPath string) error {
 
 		// The CLI signs in through the browser (R-406): approved by a
 		// session, collected with the CLI's verifier, minted like any
-		// delegated token under host policy's lifetime (R-061).
+		// delegated token under host policy's lifetime (R-061). `pando token
+		// create --service` asks the same way for a service token, which
+		// needs install.tokens.manage (R-060, issue #396).
 		CLISignIn: &clisignin.Service{
 			Store: state.NewCLISignIns(db), Users: users, Tokens: tokens,
 			Policy: policyStore, Clock: clock.System{},
+			MayCreateServiceTokens: clisignin.ServiceTokenCheck(users, authzStore, authorizer),
 		},
 
 		// MCP clients sign in with OAuth (R-413): R-406's flow, with the

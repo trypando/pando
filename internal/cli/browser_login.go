@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
-	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -28,6 +27,10 @@ import (
 // 127.0.0.1 only, or the person pastes it; the CLI trades code and verifier
 // for a token. Nothing but this process ever holds the verifier, so a code
 // that goes astray signs nobody in.
+//
+// `pando token create` asks for its token the same way (issue #396): the CLI
+// holds only a token, and a token cannot mint one, so a signed-in person
+// approves each.
 
 // openBrowser opens an address in the person's browser. A variable so a test
 // can stand in for the person.
@@ -53,8 +56,29 @@ var openBrowser = func(address string) error {
 // its 5 minutes once it is approved.
 var browserWait = 10 * time.Minute
 
-// errCanceled is the person pressing Cancel on the approval page.
-var errCanceled = errors.New("sign-in was canceled in the browser, so nothing was stored. Run pando login again to sign in")
+// approval is what the browser is asked to approve, and how the CLI talks
+// about it.
+type approval struct {
+	// name and kind are the token's: kind is "service", or empty for a
+	// delegated token.
+	name, kind string
+
+	// done is what the loopback address tells the console happened:
+	// "signed_in" or "created".
+	done string
+
+	// command is what to run again after a failure.
+	command string
+}
+
+// signInApproval is pando login's.
+func signInApproval() approval {
+	return approval{name: tokenName(), done: "signed_in", command: "pando login"}
+}
+
+func (a approval) canceled() error {
+	return fmt.Errorf("canceled in the browser, so nothing was made. Run %s again", a.command)
+}
 
 // randomString is n random bytes, base64url without padding.
 func randomString(n int) (string, error) {
@@ -71,15 +95,40 @@ func approvalAddress(server string, q url.Values) string {
 }
 
 func browserLogin(cmd *cobra.Command, server string, noBrowser bool) error {
-	verifier, err := randomString(32)
+	issued, err := approveInBrowser(cmd, server, noBrowser, signInApproval())
 	if err != nil {
 		return err
+	}
+	return signedIn(cmd, server, issued.Secret, issued.Username)
+}
+
+// issuedToken is a token the browser approved, as POST /cli-sign-ins/token
+// answers with it.
+type issuedToken struct {
+	Token struct {
+		ID   string `json:"id"`
+		Kind string `json:"kind"`
+		Name string `json:"name"`
+	} `json:"token"`
+	Secret   string `json:"secret"`
+	Username string `json:"username"`
+}
+
+// approveInBrowser has a signed-in person approve a in the console and trades
+// the code that comes back for the token.
+func approveInBrowser(cmd *cobra.Command, server string, noBrowser bool, a approval) (issuedToken, error) {
+	verifier, err := randomString(32)
+	if err != nil {
+		return issuedToken{}, err
 	}
 	sum := sha256.Sum256([]byte(verifier))
 	q := url.Values{
 		"code_challenge":        {base64.RawURLEncoding.EncodeToString(sum[:])},
 		"code_challenge_method": {"S256"},
-		"name":                  {tokenName()},
+		"name":                  {a.name},
+	}
+	if a.kind != "" {
+		q.Set("kind", a.kind)
 	}
 
 	var code string
@@ -88,30 +137,25 @@ func browserLogin(cmd *cobra.Command, server string, noBrowser bool) error {
 		if lerr != nil {
 			fmt.Fprintf(cmd.ErrOrStderr(), "Could not listen for the browser on 127.0.0.1 (%v), so you will paste the code instead.\n", lerr)
 			noBrowser = true
-		} else if code, err = viaLoopback(cmd, server, ln, q); err != nil {
-			return err
+		} else if code, err = viaLoopback(cmd, server, ln, q, a); err != nil {
+			return issuedToken{}, err
 		}
 	}
 	if noBrowser {
-		if code, err = viaPaste(cmd, server, q); err != nil {
-			return err
+		if code, err = viaPaste(cmd, server, q, a); err != nil {
+			return issuedToken{}, err
 		}
 	}
 
 	anon := &Client{BaseURL: server, HTTP: &http.Client{Timeout: time.Minute}}
-	var issued struct {
-		Secret   string `json:"secret"`
-		Username string `json:"username"`
-	}
-	if err := anon.Do("POST", "/cli-sign-ins/token",
-		map[string]string{"code": code, "code_verifier": verifier}, &issued); err != nil {
-		return err
-	}
-	return signedIn(cmd, server, issued.Secret, issued.Username)
+	var issued issuedToken
+	err = anon.Do("POST", "/cli-sign-ins/token",
+		map[string]string{"code": code, "code_verifier": verifier}, &issued)
+	return issued, err
 }
 
 // viaPaste asks for the code the approval page shows.
-func viaPaste(cmd *cobra.Command, server string, q url.Values) (string, error) {
+func viaPaste(cmd *cobra.Command, server string, q url.Values, a approval) (string, error) {
 	fmt.Fprintf(cmd.ErrOrStderr(),
 		"Open this address in a browser signed in to Pando, on any computer, and approve:\n\n  %s\n\n",
 		approvalAddress(server, q))
@@ -120,7 +164,7 @@ func viaPaste(cmd *cobra.Command, server string, q url.Values) (string, error) {
 		return "", err
 	}
 	if code == "" {
-		return "", errors.New("no code was pasted, so nothing was stored. Run pando login --no-browser again")
+		return "", fmt.Errorf("no code was pasted, so nothing was made. Run %s --no-browser again", a.command)
 	}
 	return code, nil
 }
@@ -133,7 +177,7 @@ type callback struct {
 
 // viaLoopback opens the approval page and waits for the browser to bring the
 // code to ln.
-func viaLoopback(cmd *cobra.Command, server string, ln net.Listener, q url.Values) (string, error) {
+func viaLoopback(cmd *cobra.Command, server string, ln net.Listener, q url.Values, a approval) (string, error) {
 	defer func() { _ = ln.Close() }()
 
 	state, err := randomString(24)
@@ -147,16 +191,16 @@ func viaLoopback(cmd *cobra.Command, server string, ln net.Listener, q url.Value
 	got := make(chan callback, 1)
 	srv := &http.Server{
 		ReadHeaderTimeout: 10 * time.Second,
-		Handler:           loopbackHandler(server, state, got),
+		Handler:           loopbackHandler(server, state, a.done, got),
 	}
 	go func() { _ = srv.Serve(ln) }()
 	defer func() { _ = srv.Close() }()
 
-	fmt.Fprintf(cmd.ErrOrStderr(), "Opening Pando in your browser to sign in. If it does not open, go to:\n\n  %s\n\n", address)
+	fmt.Fprintf(cmd.ErrOrStderr(), "Opening Pando in your browser to approve this. If it does not open, go to:\n\n  %s\n\n", address)
 	if err := openBrowser(address); err != nil {
-		fmt.Fprintf(cmd.ErrOrStderr(), "Could not open a browser (%v). Open the address above yourself, or run pando login --no-browser.\n", err)
+		fmt.Fprintf(cmd.ErrOrStderr(), "Could not open a browser (%v). Open the address above yourself, or run %s --no-browser.\n", err, a.command)
 	}
-	fmt.Fprintln(cmd.ErrOrStderr(), "Waiting for you to approve this CLI in the browser…")
+	fmt.Fprintln(cmd.ErrOrStderr(), "Waiting for you to approve it in the browser…")
 
 	ctx := cmd.Context()
 	if ctx == nil {
@@ -165,12 +209,12 @@ func viaLoopback(cmd *cobra.Command, server string, ln net.Listener, q url.Value
 	select {
 	case c := <-got:
 		if c.canceled {
-			return "", errCanceled
+			return "", a.canceled()
 		}
 		return c.code, nil
 	case <-time.After(browserWait):
-		return "", fmt.Errorf("no approval came back from the browser within %s, so nothing was stored. "+
-			"Run pando login again, or pando login --no-browser to paste the code instead", browserWait)
+		return "", fmt.Errorf("no approval came back from the browser within %s, so nothing was made. "+
+			"Run %s again, or with --no-browser to paste the code instead", browserWait, a.command)
 	case <-ctx.Done():
 		return "", ctx.Err()
 	}
@@ -181,7 +225,7 @@ func viaLoopback(cmd *cobra.Command, server string, ln net.Listener, q url.Value
 // stale tab — is not found, and the CLI keeps waiting. The browser is then
 // sent back to the console to say what happened, so what the person sees is
 // Pando's page rather than one this process draws.
-func loopbackHandler(server, state string, got chan<- callback) http.Handler {
+func loopbackHandler(server, state, done string, got chan<- callback) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		v := r.URL.Query()
 		if r.URL.Path != "/callback" || v.Get("state") != state {
@@ -203,7 +247,7 @@ func loopbackHandler(server, state string, got chan<- callback) http.Handler {
 		default:
 			// Already answered: a reload of the redirect.
 		}
-		outcome := "signed_in"
+		outcome := done
 		if c.canceled {
 			outcome = "canceled"
 		}

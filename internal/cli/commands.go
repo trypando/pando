@@ -1179,20 +1179,21 @@ func grantCmd(client func() (*Client, error)) *cobra.Command {
 			}
 			user, _ := cmd.Flags().GetString("user")
 			group, _ := cmd.Flags().GetString("group")
+			token, _ := cmd.Flags().GetString("token")
 			anyone, _ := cmd.Flags().GetBool("anyone")
 			passcode, _ := cmd.Flags().GetString("passcode")
 			plane, _ := cmd.Flags().GetString("plane")
 			role, _ := cmd.Flags().GetString("role")
 
-			// Exactly one of the three: a grant is to one principal.
+			// Exactly one: a grant is to one principal.
 			chosen := 0
-			for _, set := range []bool{user != "", group != "", anyone} {
+			for _, set := range []bool{user != "", group != "", token != "", anyone} {
 				if set {
 					chosen++
 				}
 			}
 			if chosen != 1 {
-				return fmt.Errorf("say who to share with: one of --user=<id>, --group=<id> or --anyone")
+				return fmt.Errorf("say who to share with: one of --user=<id>, --group=<id>, --token=<id> or --anyone")
 			}
 			if passcode != "" && !anyone {
 				return fmt.Errorf("--passcode goes with --anyone: only sharing with everyone has a passcode")
@@ -1211,6 +1212,11 @@ func grantCmd(client func() (*Client, error)) *cobra.Command {
 			case group != "":
 				body["principal_kind"] = "group"
 				body["principal_id"] = group
+			case token != "":
+				// A service token, its own principal (R-060). A delegated
+				// token acts as its owner and is never shared with (R-058).
+				body["principal_kind"] = "token"
+				body["principal_id"] = token
 			default:
 				body["principal_kind"] = "user"
 				body["principal_id"] = user
@@ -1227,6 +1233,7 @@ func grantCmd(client func() (*Client, error)) *cobra.Command {
 	}
 	add.Flags().String("user", "", "user ID to share with")
 	add.Flags().String("group", "", "group ID to share with")
+	add.Flags().String("token", "", "service token ID to share with")
 	add.Flags().Bool("anyone", false, "share with anyone on the internet, without signing in")
 	add.Flags().String("passcode", "", "with --anyone: only those who enter this passcode")
 	// "data" by default: sharing an app normally means letting someone use it,
@@ -1833,11 +1840,14 @@ func policyCmd(client func() (*Client, error)) *cobra.Command {
 }
 
 func tokenCmd(client func() (*Client, error)) *cobra.Command {
-	cmd := &cobra.Command{Use: "token", Short: "Manage your API tokens"}
+	cmd := &cobra.Command{Use: "token", Short: "Manage API tokens"}
 
-	cmd.AddCommand(&cobra.Command{
+	cmd.AddCommand(tokenCreateCmd(client))
+
+	var service bool
+	list := &cobra.Command{
 		Use:   "list",
-		Short: "List your tokens",
+		Short: "List your tokens, or the installation's service tokens",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			c, err := client()
 			if err != nil {
@@ -1850,7 +1860,11 @@ func tokenCmd(client func() (*Client, error)) *cobra.Command {
 					RevokedAt *string `json:"revoked_at"`
 				} `json:"tokens"`
 			}
-			if err := c.Do("GET", "/tokens", nil, &out); err != nil {
+			path := "/tokens"
+			if service {
+				path = "/tokens/service"
+			}
+			if err := c.Do("GET", path, nil, &out); err != nil {
 				return err
 			}
 			t := table(cmd.OutOrStdout(), "NAME", "STATE", "ID")
@@ -1863,7 +1877,9 @@ func tokenCmd(client func() (*Client, error)) *cobra.Command {
 			}
 			return t.Flush()
 		},
-	})
+	}
+	list.Flags().BoolVar(&service, "service", false, "the installation's service tokens")
+	cmd.AddCommand(list)
 
 	cmd.AddCommand(&cobra.Command{
 		Use:   "revoke <token-id>",
@@ -1882,6 +1898,95 @@ func tokenCmd(client func() (*Client, error)) *cobra.Command {
 		},
 	})
 	return cmd
+}
+
+// tokenCreateCmd mints a token and prints its secret once (R-063, issue
+// #396). The CLI holds only a token, and a token cannot mint a token, so a
+// signed-in person approves each one: in the browser, as pando login does, or
+// with a password in the terminal.
+func tokenCreateCmd(client func() (*Client, error)) *cobra.Command {
+	var service, noBrowser bool
+	var username string
+
+	cmd := &cobra.Command{
+		Use:   "create <name>",
+		Short: "Create a token and print its secret",
+		Long: "Creates a delegated token, which acts as you, or with --service a service token, which is\n" +
+			"its own principal and reaches only the apps shared with it (pando grant add --token).\n" +
+			"A service token needs install.tokens.manage.\n\n" +
+			"You approve it in the browser, as with pando login; --no-browser prints the address to\n" +
+			"open elsewhere, and --username asks for a password instead.\n\n" +
+			"The secret alone goes to standard output, and is shown only this once.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := client()
+			if err != nil {
+				return err
+			}
+			name := strings.TrimSpace(args[0])
+			if name == "" {
+				return fmt.Errorf("a token needs a name, such as \"nightly agent\"")
+			}
+
+			var issued issuedToken
+			if username != "" {
+				issued, err = passwordToken(cmd, c.BaseURL, username, name, service)
+			} else {
+				a := approval{name: name, done: "created", command: "pando token create"}
+				if service {
+					a.kind = "service"
+				}
+				issued, err = approveInBrowser(cmd, c.BaseURL, noBrowser, a)
+			}
+			if err != nil {
+				return err
+			}
+
+			fmt.Fprintln(cmd.OutOrStdout(), issued.Secret)
+			kind := "Token"
+			if service {
+				kind = "Service token"
+			}
+			fmt.Fprintf(cmd.ErrOrStderr(), "%s %q created: %s. Pando shows its secret only this once.\n",
+				kind, issued.Token.Name, issued.Token.ID)
+			if service {
+				fmt.Fprintf(cmd.ErrOrStderr(), "Share an app with it: pando grant add <app> --token %s\n", issued.Token.ID)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&service, "service", false, "create a service token, its own principal")
+	cmd.Flags().BoolVar(&noBrowser, "no-browser", false, "print the address to open on another computer, and paste the code it shows")
+	cmd.Flags().StringVar(&username, "username", "", "approve with this username and a password instead of a browser")
+	cmd.MarkFlagsMutuallyExclusive("username", "no-browser")
+	return cmd
+}
+
+// passwordToken signs in with a password for one call, mints the token with
+// that session, and ends the session.
+func passwordToken(cmd *cobra.Command, server, username, name string, service bool) (issuedToken, error) {
+	password, err := promptSecret(cmd, "Password: ")
+	if err != nil {
+		return issuedToken{}, err
+	}
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		return issuedToken{}, err
+	}
+	anon := &Client{BaseURL: server, HTTP: &http.Client{Jar: jar, Timeout: time.Minute}}
+	if err := signInSession(cmd, anon, username, password); err != nil {
+		return issuedToken{}, err
+	}
+	// The session has one job; it ends whatever happens.
+	defer func() { _ = anon.Do("DELETE", sessionsPath, nil, nil) }()
+
+	path := "/tokens"
+	if service {
+		path = "/tokens/service"
+	}
+	var issued issuedToken
+	err = anon.Do("POST", path, map[string]any{"name": name}, &issued)
+	return issued, err
 }
 
 // --- helpers ---------------------------------------------------------------

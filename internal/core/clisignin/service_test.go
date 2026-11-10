@@ -165,7 +165,7 @@ func TestR406_ACodeIsWorthNothingWithoutItsVerifier(t *testing.T) {
 
 	refused, err := r.svc.Exchange(ctx, code(t, approved), strings.Repeat("x", 43))
 	requireCode(t, err, errs.AuthInvalid, "wrong verifier")
-	require.Equal(t, clisignin.Exchanged{UserID: "usr_ada", ApprovedBy: "ses_1", Name: "laptop CLI"}, refused,
+	require.Equal(t, clisignin.Exchanged{UserID: "usr_ada", ApprovedBy: "ses_1", Name: "laptop CLI", Kind: clisignin.KindDelegated}, refused,
 		"says whose approval was spent, for the audit log")
 	refused, err = r.svc.Exchange(ctx, code(t, approved), verifier)
 	requireCode(t, err, errs.AuthInvalid, "spent by the wrong verifier")
@@ -297,4 +297,84 @@ func requireCode(t *testing.T, err error, want errs.Code, why string) {
 	require.NotNil(t, e, why)
 	require.Equal(t, want, e.Code, why)
 	require.NotEmpty(t, e.Remedy, "%s: R-105 — says what to do", why)
+}
+
+// TestR060_TheCLICreatesAServiceTokenThroughTheBrowser asserts R-060 for
+// `pando token create --service` (issue #396): an approval asking for a
+// service token mints one that is its own principal, owned by nobody and
+// recorded as made by the session that approved it.
+func TestR060_TheCLICreatesAServiceTokenThroughTheBrowser(t *testing.T) {
+	r := newRig()
+	var asked []string
+	r.svc.MayCreateServiceTokens = func(_ context.Context, userID string) error {
+		asked = append(asked, userID)
+		return nil
+	}
+
+	req := request(0)
+	req.Name, req.Kind = "nightly agent", clisignin.KindService
+	approved, err := r.svc.Approve(context.Background(), "usr_ada", "ses_ada", req)
+	require.NoError(t, err)
+
+	got, err := r.svc.Exchange(context.Background(), code(t, approved), verifier)
+	require.NoError(t, err)
+	require.Equal(t, clisignin.KindService, got.Kind)
+	require.Equal(t, []minted{{kind: state.TokenAccount, name: "nightly agent", owner: "", createdBy: "ses_ada"}}, r.tokens.made)
+	require.Equal(t, []string{"usr_ada", "usr_ada"}, asked, "checked when approved and again when collected")
+}
+
+func TestR060_AServiceTokenNeedsTheVerbWhenApprovedAndWhenCollected(t *testing.T) {
+	denied := errs.New(errs.PermDenied, "no install.tokens.manage")
+	req := request(0)
+	req.Kind = clisignin.KindService
+
+	t.Run("approving", func(t *testing.T) {
+		r := newRig()
+		r.svc.MayCreateServiceTokens = func(context.Context, string) error { return denied }
+		_, err := r.svc.Approve(context.Background(), "usr_ada", "ses_ada", req)
+		require.ErrorIs(t, err, denied)
+		require.Empty(t, r.store.rows, "nothing stored")
+	})
+
+	t.Run("collecting", func(t *testing.T) {
+		r := newRig()
+		allowed := true
+		r.svc.MayCreateServiceTokens = func(context.Context, string) error {
+			if allowed {
+				return nil
+			}
+			return denied
+		}
+		approved, err := r.svc.Approve(context.Background(), "usr_ada", "ses_ada", req)
+		require.NoError(t, err)
+		allowed = false
+
+		got, err := r.svc.Exchange(context.Background(), code(t, approved), verifier)
+		require.ErrorIs(t, err, denied)
+		require.Equal(t, "usr_ada", got.UserID, "a refusal says whose approval it spent")
+		require.Equal(t, clisignin.KindService, got.Kind)
+		require.Empty(t, r.tokens.made)
+	})
+
+	t.Run("not wired", func(t *testing.T) {
+		r := newRig()
+		_, err := r.svc.Approve(context.Background(), "usr_ada", "ses_ada", req)
+		require.Equal(t, errs.PermDenied, errs.As(err).Code)
+	})
+}
+
+func TestR406_AnApprovalAsksForAKnownKindOfToken(t *testing.T) {
+	r := newRig()
+	req := request(0)
+	req.Kind = "admin"
+	_, err := r.svc.Approve(context.Background(), "usr_ada", "ses_ada", req)
+	require.Equal(t, errs.ValidInvalid, errs.As(err).Code)
+
+	req.Kind = clisignin.KindDelegated
+	approved, err := r.svc.Approve(context.Background(), "usr_ada", "ses_ada", req)
+	require.NoError(t, err)
+	got, err := r.svc.Exchange(context.Background(), code(t, approved), verifier)
+	require.NoError(t, err)
+	require.Equal(t, clisignin.KindDelegated, got.Kind)
+	require.Equal(t, "usr_ada", r.tokens.made[0].owner)
 }

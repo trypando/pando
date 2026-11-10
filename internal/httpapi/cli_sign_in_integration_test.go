@@ -162,3 +162,47 @@ func TestR406_AGeneratedPasswordIsChangedFirst(t *testing.T) {
 	require.Equal(t, http.StatusForbidden, got.Code, got.String())
 	require.Equal(t, "PERM_PASSWORD_CHANGE_REQUIRED", got.ErrorCode())
 }
+
+// TestR060_TheCLICreatesAServiceTokenThroughTheBrowser asserts R-060 for pando
+// token create --service (issue #396): an account without
+// install.tokens.manage cannot approve one, and an administrator's approval is
+// traded for a service token that is its own principal, owned by nobody.
+func TestR060_TheCLICreatesAServiceTokenThroughTheBrowser(t *testing.T) {
+	t.Parallel()
+	i := newInstall(t)
+	dana := cliUser(i, "dana")
+	service := map[string]any{
+		"code_challenge": clisignin.Challenge(cliVerifier), "code_challenge_method": "S256",
+		"name": "nightly agent", "port": 0, "kind": "service",
+	}
+
+	refused := i.do(dana, http.MethodPost, "/cli-sign-ins", service)
+	require.Equal(t, http.StatusForbidden, refused.Code, refused.String())
+
+	approved := i.do(i.admin(), http.MethodPost, "/cli-sign-ins", service)
+	require.Equal(t, http.StatusCreated, approved.Code, approved.String())
+	var a struct {
+		Code string `json:"code"`
+	}
+	approved.JSON(t, &a)
+
+	got := i.anon(http.MethodPost, "/cli-sign-ins/token",
+		map[string]string{"code": a.Code, "code_verifier": cliVerifier})
+	require.Equal(t, http.StatusCreated, got.Code, got.String())
+	var issued struct {
+		Secret string `json:"secret"`
+		Token  struct {
+			ID          string `json:"id"`
+			Kind        string `json:"kind"`
+			OwnerUserID string `json:"owner_user_id"`
+		} `json:"token"`
+	}
+	got.JSON(t, &issued)
+	require.Equal(t, "account", issued.Token.Kind)
+	require.Empty(t, issued.Token.OwnerUserID, "a service token belongs to nobody")
+	require.Equal(t, 1, auditCount(t, i, "token.create", issued.Token.ID))
+
+	listed := i.do(i.admin(), http.MethodGet, "/tokens/service", nil)
+	require.Equal(t, http.StatusOK, listed.Code, listed.String())
+	require.Contains(t, listed.String(), issued.Token.ID)
+}
