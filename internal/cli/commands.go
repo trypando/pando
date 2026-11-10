@@ -894,12 +894,8 @@ func (c *Client) uploadSetup(appID string, env []string, redetect bool) (bool, e
 	var specs struct {
 		PinnedSpecID string `json:"pinned_spec_id"`
 		Revisions    []struct {
-			ID   string `json:"id"`
-			Body *struct {
-				Source struct {
-					Type string `json:"type"`
-				} `json:"source"`
-			} `json:"body"`
+			ID   string        `json:"id"`
+			Body *revisionBody `json:"body"`
 		} `json:"revisions"`
 	}
 	if err := c.Do("GET", "/apps/"+url.PathEscape(appID)+"/specs", nil, &specs); err != nil {
@@ -925,6 +921,13 @@ func (c *Client) uploadSetup(appID string, env []string, redetect bool) (bool, e
 			"write the variable into a spec revision with `pando app spec create`, or pass --detect to work out its setup again", appID)
 	}
 	return true, nil
+}
+
+// revisionBody is the part of a spec revision uploadSetup reads.
+type revisionBody struct {
+	Source struct {
+		Type string `json:"type"`
+	} `json:"source"`
 }
 
 func sourceNoun(sourceType string) string {
