@@ -28,6 +28,18 @@ Unreleased above it. -->
   still denies `app.grants.manage` to tokens by default, so `grant add` from the CLI needs that
   lifted under `agent_disabled_verbs`.
 
+### Changed
+
+- **Redeploying an uploaded app skips detection** (#397). `pando deploy <dir> --app <id>`, for an
+  app already set up from uploaded files, uploads and deploys with the setup it has, instead of
+  building, trying and scanning the app again first. `--detect` works out its setup again. MCP's
+  `pando_upload_source` now tells an agent to deploy next for such an app.
+
+### Fixed
+
+- `pando deploy <dir> --app <id>` no longer fails, after detection finishes, for an app that was
+  already set up (#397).
+
 ## [0.19.1] - 2026-11-09
 
 ### Security
