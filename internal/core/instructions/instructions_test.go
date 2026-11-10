@@ -11,6 +11,7 @@ import (
 
 	"github.com/trypando/pando/internal/core/state"
 	"github.com/trypando/pando/internal/errs"
+	"github.com/trypando/pando/internal/id"
 )
 
 type fakeStore struct {
@@ -93,4 +94,14 @@ func TestTextFallsBackToBuiltin(t *testing.T) {
 
 	s = &Service{Store: &fakeStore{row: state.StoredInstructions{Body: "Be brief.", UpdatedAt: time.Now()}}}
 	require.True(t, strings.HasSuffix(s.Text(context.Background()), "Be brief."))
+}
+
+// TestR054_AgentsAreToldTheGroupsClaimHoldsGroupIDs asserts R-054 as an agent
+// reads it: an app deciding by group reads the signed `groups` claim, and
+// finds IDs there, not the names a person sees.
+func TestR054_AgentsAreToldTheGroupsClaimHoldsGroupIDs(t *testing.T) {
+	text := Builtin()
+	require.Contains(t, text, "`groups` claim of the verified assertion")
+	require.Contains(t, text, "group IDs such as `"+string(id.Group)+"_")
+	require.Contains(t, text, "`X-Pando-Groups` are not verified")
 }
