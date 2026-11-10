@@ -930,6 +930,7 @@ type revisionBody struct {
 	} `json:"source"`
 }
 
+// sourceNoun names what a spec deploys from, by its source type, for a message.
 func sourceNoun(sourceType string) string {
 	switch sourceType {
 	case "git":

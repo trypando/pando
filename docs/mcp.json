@@ -1869,7 +1869,7 @@
     },
     {
       "name": "pando_rerun_detection",
-      "description": "Work out again how to run an app, from its source as it is now: after the first pando_upload_source, after how the app builds or runs changed, or after setting a registry credential for a private image. It builds the app and runs it on trial, which takes minutes. New files for an app already set up from uploaded files need only pando_deploy; a new commit for an app from a repository ships as a spec revision that names it. Nothing changes until the new proposal is accepted. Then call pando_get_detection with wait_seconds.",
+      "description": "Work out again how to run an app, from its source as it is now: after the first pando_upload_source, after how the app builds or runs changed, or after setting a registry credential for a private image. It builds the app and runs it on trial, which takes minutes. New files for an app already set up from uploaded files are sent with pando_upload_source and then deployed with pando_deploy; a new commit for an app from a repository ships as a spec revision that names it. Nothing changes until the new proposal is accepted. Then call pando_get_detection with wait_seconds.",
       "input_schema": {
         "properties": {
           "app_id": {
