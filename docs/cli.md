@@ -1177,9 +1177,13 @@ With a path, packs the directory, uploads it as the app's source, and deploys th
 The second form is for an agent: something that has just
 generated an app cannot commit and push, but it can run a command.
 
+With --app, an app already set up to deploy uploaded files keeps its setup:
+the new files are uploaded and deployed. --detect works out its setup again.
+
 | Flag | Default | What it does |
 | --- | --- | --- |
 | `--app` |  | deploy a directory as an existing app, instead of creating one |
+| `--detect` |  | with --app, work out the app's setup again from the directory and replace the one it has |
 | `--env` | `[]` | KEY=VALUE, set when a new directory's setup is accepted; repeat for more (e.g. --env API_URL=https://api) |
 | `--revision` | `0` | the spec revision to deploy (defaults to the pinned one) |
 

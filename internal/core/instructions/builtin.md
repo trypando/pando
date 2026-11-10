@@ -8,6 +8,8 @@ rules for writing an app that runs well here, and for doing it safely.
 
 - Create the app, let Pando detect how it runs, answer its questions, review the plan, then deploy.
   Read every question and plan note in full; each says what is missing and what answer is valid.
+- To ship new files to an app already set up from uploaded files, upload them and deploy. Detect
+  again only when how the app builds or runs changed, such as a new dependency; it takes minutes.
 - A plan error (`PLAN_*`) blocks the deploy. Fix the cause in the app or the spec. Do not look for a
   way around it.
 - A refusal from host policy or a permission check is a decision an administrator made. Tell the
