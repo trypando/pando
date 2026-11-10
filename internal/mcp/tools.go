@@ -953,8 +953,11 @@ var toolList = []tool{
 		Description: "Send an app's files as its source: a gzipped tar of the app's directory, " +
 			"base64-encoded, at most 256 MB compressed. Paths in the archive are relative to the " +
 			"app's root; leave out .git, node_modules and build output. A single index.html is " +
-			"enough for a static site. Replaces any files sent before. Then call " +
-			"pando_rerun_detection so Pando works out how to run them.",
+			"enough for a static site. Replaces any files sent before. For a new app, call " +
+			"pando_rerun_detection next so Pando works out how to run them. For an app already set up " +
+			"from uploaded files, call pando_deploy next: the deploy builds these files with the setup " +
+			"it has. Rerun detection only when how the app builds or runs changed, such as a new " +
+			"dependency like a database.",
 		Schema: schema(map[string]any{
 			"app_id":         str(appIDDescription),
 			"archive_base64": str("The gzipped tar's bytes, base64-encoded."),
@@ -974,8 +977,12 @@ var toolList = []tool{
 	{
 		Name: "pando_rerun_detection",
 		Description: "Work out again how to run an app, from its source as it is now: after " +
-			"pando_upload_source, after the repository changed, or after setting a registry " +
-			"credential for a private image. Nothing changes until the new proposal is accepted. " +
+			"the first pando_upload_source, after how the app builds or runs changed, or after " +
+			"setting a registry credential for a private image. It builds the app and runs it on " +
+			"trial, which takes minutes. New files for an app already set up from uploaded files are " +
+			"sent with pando_upload_source and then deployed with pando_deploy; a new commit for an " +
+			"app from a repository ships as a spec revision that names it. " +
+			"Nothing changes until the new proposal is accepted. " +
 			"Then call pando_get_detection with wait_seconds.",
 		Schema:  appIDSchema(),
 		request: appRequest("POST", "/detection/rerun"),

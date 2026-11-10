@@ -772,6 +772,7 @@ func deployCmd(client func() (*Client, error)) *cobra.Command {
 	var asApp string
 	var env []string
 	var revision int
+	var redetect bool
 
 	cmd := &cobra.Command{
 		Use:   "deploy <app|path>",
@@ -779,7 +780,9 @@ func deployCmd(client func() (*Client, error)) *cobra.Command {
 		Long: "With an app ID, deploys that app.\n" +
 			"With a path, packs the directory, uploads it as the app's source, and deploys that.\n\n" +
 			"The second form is for an agent: something that has just\n" +
-			"generated an app cannot commit and push, but it can run a command.",
+			"generated an app cannot commit and push, but it can run a command.\n\n" +
+			"With --app, an app already set up to deploy uploaded files keeps its setup:\n" +
+			"the new files are uploaded and deployed. --detect works out its setup again.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := client()
@@ -792,7 +795,7 @@ func deployCmd(client func() (*Client, error)) *cobra.Command {
 			// than by a flag, because `pando deploy ./` is the form the design
 			// names and a flag would make the common case the verbose one.
 			if info, statErr := os.Stat(target); statErr == nil && info.IsDir() {
-				if target, err = c.uploadDirectory(cmd, target, asApp, env); err != nil {
+				if target, err = c.uploadDirectory(cmd, target, asApp, env, redetect); err != nil {
 					return err
 				}
 			}
@@ -822,16 +825,23 @@ func deployCmd(client func() (*Client, error)) *cobra.Command {
 	cmd.Flags().StringVar(&asApp, "app", "", "deploy a directory as an existing app, instead of creating one")
 	cmd.Flags().StringArrayVar(&env, "env", nil,
 		"KEY=VALUE, set when a new directory's setup is accepted; repeat for more (e.g. --env API_URL=https://api)")
+	cmd.Flags().BoolVar(&redetect, "detect", false,
+		"with --app, work out the app's setup again from the directory and replace the one it has")
 	return cmd
 }
 
 // uploadDirectory packs a directory, uploads it as an app's source and
 // prepares it to deploy, making the app first when none is named. It returns
 // the app to deploy.
-func (c *Client) uploadDirectory(cmd *cobra.Command, dir, appID string, env []string) (string, error) {
+func (c *Client) uploadDirectory(cmd *cobra.Command, dir, appID string, env []string, redetect bool) (string, error) {
 	// Packed before anything is created, so a directory that cannot be packed
 	// leaves no empty app behind to count against its owner's limit (R-244).
 	archive, files, err := PackDirectory(dir)
+	if err != nil {
+		return "", err
+	}
+
+	configured, err := c.uploadSetup(appID, env, redetect)
 	if err != nil {
 		return "", err
 	}
@@ -856,13 +866,81 @@ func (c *Client) uploadDirectory(cmd *cobra.Command, dir, appID string, env []st
 		return "", err
 	}
 
+	// Set up already to deploy its upload, the app's spec names the upload
+	// and not a copy of it, so the deploy builds these files as they are.
+	// Detecting again would build and try them only to propose the setup the
+	// app already has (R-022: detection is asked for, never run on its own).
+	if configured && !redetect {
+		fmt.Fprintln(cmd.ErrOrStderr(), "Keeping its setup.")
+		return appID, nil
+	}
+
 	// The source only exists now, so detection has to run against it — it
 	// could not have run at creation, when there was nothing to look at.
-	// Explicit, which is R-022: detection never re-runs on its own.
-	if err := c.prepareUploadedApp(cmd, appID, env); err != nil {
+	if err := c.prepareUploadedApp(cmd, appID, env, configured); err != nil {
 		return "", err
 	}
 	return appID, nil
+}
+
+// uploadSetup reports whether a named app already has a setup that deploys
+// its upload, and refuses what uploading cannot do for it: an app set up from
+// a repository or an image deploys that, whatever is uploaded, until its setup
+// is replaced, which only --detect asks for.
+func (c *Client) uploadSetup(appID string, env []string, redetect bool) (bool, error) {
+	if appID == "" {
+		return false, nil
+	}
+	// The list says which revision is pinned, without bodies; the revision
+	// itself says what it deploys from.
+	var specs struct {
+		PinnedSpecID string `json:"pinned_spec_id"`
+	}
+	if err := c.Do("GET", "/apps/"+url.PathEscape(appID)+"/specs", nil, &specs); err != nil {
+		return false, err
+	}
+	if specs.PinnedSpecID == "" {
+		return false, nil
+	}
+	var pinned struct {
+		Body *revisionBody `json:"body"`
+	}
+	if err := c.Do("GET", "/apps/"+url.PathEscape(appID)+"/specs/"+url.PathEscape(specs.PinnedSpecID), nil, &pinned); err != nil {
+		return false, err
+	}
+	sourceType := ""
+	if pinned.Body != nil {
+		sourceType = pinned.Body.Source.Type
+	}
+	switch {
+	case redetect:
+	case sourceType != "upload":
+		return true, fmt.Errorf("app %s is set up to deploy from its %s, not from uploaded files; "+
+			"`pando deploy <path> --app %s --detect` replaces its setup with one worked out from the directory",
+			appID, sourceNoun(sourceType), appID)
+	case len(env) > 0:
+		return true, fmt.Errorf("--env is set when a setup is accepted, and app %s keeps its setup; "+
+			"write the variable into a spec revision with `pando app spec create`, or pass --detect to work out its setup again", appID)
+	}
+	return true, nil
+}
+
+// revisionBody is the part of a spec revision uploadSetup reads.
+type revisionBody struct {
+	Source struct {
+		Type string `json:"type"`
+	} `json:"source"`
+}
+
+// sourceNoun names what a spec deploys from, by its source type, for a message.
+func sourceNoun(sourceType string) string {
+	switch sourceType {
+	case "git":
+		return "repository"
+	case "image":
+		return "image"
+	}
+	return "source"
 }
 
 // prepareUploadedApp runs detection over a freshly uploaded directory and pins
@@ -872,7 +950,7 @@ func (c *Client) uploadDirectory(cmd *cobra.Command, dir, appID string, env []st
 // self-contained and pasteable into the assistant that wrote the app, which is
 // the whole intended workflow for R-262 — and paraphrasing them here would undo
 // that at the last step, exactly as it would in the console.
-func (c *Client) prepareUploadedApp(cmd *cobra.Command, appID string, env []string) error {
+func (c *Client) prepareUploadedApp(cmd *cobra.Command, appID string, env []string, configured bool) error {
 	if err := c.Do("POST", "/apps/"+appID+"/detection/rerun", map[string]any{}, nil); err != nil {
 		return err
 	}
@@ -901,7 +979,7 @@ func (c *Client) prepareUploadedApp(cmd *cobra.Command, appID string, env []stri
 		return fmt.Errorf("%d question(s) still to answer", len(open))
 	}
 
-	// Nothing outstanding, so accept the proposal and pin revision 1. Accepting
+	// Nothing outstanding, so accept the proposal and pin it. Accepting
 	// does not deploy — that is the next call, and keeping them separate is
 	// what makes "accepted but not deployed" a state someone can sit in.
 	// With the variables given on the command line written into the accepted
@@ -911,7 +989,13 @@ func (c *Client) prepareUploadedApp(cmd *cobra.Command, appID string, env []stri
 	if err != nil {
 		return err
 	}
-	if err := c.Do("POST", "/apps/"+appID+"/detection/accept", map[string]any{"values": values}, nil); err != nil {
+	// An app with a setup is replacing it, which --detect asked for; the
+	// server refuses the replacement without confirm (R-022).
+	accept := map[string]any{"values": values}
+	if configured {
+		accept["confirm"] = true
+	}
+	if err := c.Do("POST", "/apps/"+appID+"/detection/accept", accept, nil); err != nil {
 		return err
 	}
 	fmt.Fprintf(cmd.ErrOrStderr(), "Recognized it: %s, built with %s.\n",

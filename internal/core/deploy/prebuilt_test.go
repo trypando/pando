@@ -229,3 +229,25 @@ func TestR311_ADeployRunsDetectionsBuildOnlyWhenItIsWhatItWouldBuild(t *testing.
 	_, ok = r.detectionBuild(ctx, compose, checkout)
 	require.True(t, ok)
 }
+
+// R-262: an app set up to deploy its upload is redeployed by uploading and
+// deploying, with no detection between. The spec names the upload, not a copy
+// of it, so what tells the deploy the files changed is the archive's digest:
+// detection's image of the last archive is not the image of this one.
+func TestR262_ARedeployOfANewUploadBuildsIt(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	app := buildApp()
+	app.Source = spec.Source{Type: spec.SourceUpload, UploadID: app.AppID}
+	detected := "sha256:" + strings.Repeat("ab", 32)
+	uploaded := "sha256:" + strings.Repeat("cd", 32)
+
+	r := (&Runner{}).WithDetectionBuilds(storedBuild{built: &detect.Built{
+		Inputs: spec.BuildInputs(app), Source: detected, Image: "sha256:1",
+	}})
+
+	_, ok := r.detectionBuild(ctx, app, &source.Checkout{Digest: detected})
+	require.True(t, ok, "the archive detection built")
+	_, ok = r.detectionBuild(ctx, app, &source.Checkout{Digest: uploaded})
+	require.False(t, ok, "a new archive is built")
+}

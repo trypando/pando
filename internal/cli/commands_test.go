@@ -672,6 +672,109 @@ func TestDeployingADirectoryAsAnExistingAppSkipsCreation(t *testing.T) {
 	require.True(t, api.sawPath("/apps/app_01HQ8/source"))
 }
 
+// pinnedTo answers GET /specs and the pinned revision for an app whose pinned
+// revision deploys from sourceType. The list carries no bodies, as the server
+// sends it (state.ListRevisions); only the revision itself has one.
+func (f *fakeAPI) pinnedTo(sourceType string) *fakeAPI {
+	return f.reply("GET /apps/app_01HQ8/specs", map[string]any{
+		"pinned_spec_id": "spec_01HQ8",
+		"revisions": []map[string]any{
+			{"id": "spec_01HQ8", "revision": 2},
+			{"id": "spec_01HQ7", "revision": 1},
+		},
+	}).reply("GET /apps/app_01HQ8/specs/spec_01HQ8", map[string]any{
+		"id": "spec_01HQ8", "revision": 2,
+		"body": map[string]any{"source": map[string]string{"type": sourceType}},
+	})
+}
+
+// R-022: an app already set up to deploy its upload keeps that setup. The new
+// files are uploaded and deployed; detecting again would build and try them
+// only to propose the setup the app already has.
+func TestR022_RedeployingADirectoryKeepsTheAppsSetup(t *testing.T) {
+	dir := writeTree(t, map[string]string{"main.go": "package main"})
+
+	api := newAPI(t).pinnedTo("upload").
+		reply("POST /apps/app_01HQ8/deployments", map[string]any{"id": "dep_01HQ8"})
+
+	got := run(t, api, "", "deploy", dir, "--app", "app_01HQ8")
+	require.NoError(t, got.err)
+
+	require.True(t, api.sawPath("/apps/app_01HQ8/source"), "the directory is uploaded")
+	require.False(t, api.sawPath("/apps/app_01HQ8/detection/rerun"), "detection is not run")
+	require.False(t, api.sawPath("/apps/app_01HQ8/detection/accept"), "the setup is not replaced")
+	require.True(t, api.sawPath("/apps/app_01HQ8/deployments"))
+	require.Contains(t, got.errOut, "Keeping its setup.")
+	require.Contains(t, got.out, "Deploying")
+}
+
+// --detect is the explicit re-detection R-022 asks for, and replacing a setup
+// is what it means, so the accept confirms it.
+func TestR022_DetectWorksOutASetUpAppsSetupAgain(t *testing.T) {
+	dir := writeTree(t, map[string]string{"main.go": "package main"})
+
+	api := newAPI(t).pinnedTo("upload").
+		reply("GET /apps/app_01HQ8/detection", map[string]any{
+			"status":    "succeeded",
+			"detection": map[string]any{"winning_bid": map[string]string{"detector": "Go", "strategy": "buildpack"}},
+		}).
+		reply("POST /apps/app_01HQ8/deployments", map[string]any{"id": "dep_01HQ8"})
+
+	got := run(t, api, "", "deploy", dir, "--app", "app_01HQ8", "--detect", "--env", "A=1")
+	require.NoError(t, got.err)
+
+	require.True(t, api.sawPath("/apps/app_01HQ8/detection/rerun"))
+	require.JSONEq(t, `{"values":[{"key":"A","value":"1"}],"confirm":true}`, api.bodyFor("POST /apps/app_01HQ8/detection/accept"))
+	require.True(t, api.sawPath("/apps/app_01HQ8/deployments"))
+}
+
+// An app set up from a repository or an image deploys that whatever is
+// uploaded, so uploading to it without --detect would ship nothing new.
+func TestDeployingADirectoryToAnAppSetUpFromElsewhereNeedsDetect(t *testing.T) {
+	dir := writeTree(t, map[string]string{"main.go": "package main"})
+
+	for sourceType, noun := range map[string]string{"git": "repository", "image": "image", "": "source"} {
+		api := newAPI(t).pinnedTo(sourceType)
+
+		got := run(t, api, "", "deploy", dir, "--app", "app_01HQ8")
+		require.ErrorContains(t, got.err, "set up to deploy from its "+noun)
+		require.ErrorContains(t, got.err, "--detect")
+		require.False(t, api.sawPath("/apps/app_01HQ8/source"), "nothing is uploaded")
+		require.False(t, api.sawPath("/apps/app_01HQ8/deployments"))
+	}
+}
+
+// --env is written into a setup as it is accepted; an app keeping its setup
+// accepts none, so the variables would be dropped without a word.
+func TestDeployingADirectoryRefusesEnvForAnAppKeepingItsSetup(t *testing.T) {
+	dir := writeTree(t, map[string]string{"main.go": "package main"})
+	api := newAPI(t).pinnedTo("upload")
+
+	got := run(t, api, "", "deploy", dir, "--app", "app_01HQ8", "--env", "A=1")
+	require.ErrorContains(t, got.err, "app app_01HQ8 keeps its setup")
+	require.False(t, api.sawPath("/apps/app_01HQ8/source"))
+}
+
+func TestDeployingADirectoryReportsAnAppThatCannotBeRead(t *testing.T) {
+	dir := writeTree(t, map[string]string{"main.go": "package main"})
+	api := newAPI(t).fail("GET /apps/app_01HQ8/specs", http.StatusNotFound,
+		map[string]string{"code": "NOT_FOUND", "message": "There is no app app_01HQ8."})
+
+	got := run(t, api, "", "deploy", dir, "--app", "app_01HQ8")
+	require.ErrorContains(t, got.err, "There is no app app_01HQ8.")
+	require.False(t, api.sawPath("/apps/app_01HQ8/source"))
+}
+
+func TestDeployingADirectoryReportsAPinnedRevisionThatCannotBeRead(t *testing.T) {
+	dir := writeTree(t, map[string]string{"main.go": "package main"})
+	api := newAPI(t).pinnedTo("upload").fail("GET /apps/app_01HQ8/specs/spec_01HQ8", http.StatusNotFound,
+		map[string]string{"code": "NOT_FOUND", "message": "There is no such revision of this app's spec."})
+
+	got := run(t, api, "", "deploy", dir, "--app", "app_01HQ8")
+	require.ErrorContains(t, got.err, "There is no such revision of this app's spec.")
+	require.False(t, api.sawPath("/apps/app_01HQ8/source"))
+}
+
 // The questions are printed verbatim (R-105): they are written to be
 // self-contained and pasteable into the assistant that wrote the app, and
 // paraphrasing here would undo that at the last step.

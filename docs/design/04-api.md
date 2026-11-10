@@ -704,6 +704,15 @@ password prompt in the terminal.
 
 **[D]** `pando deploy ./` must work from a local path, since R-262's agent workflow depends on it — a generated app cannot drop a config file, but an agent can invoke a command.
 
+**[D] Redeploying a directory keeps the app's setup.** `pando deploy ./ --app <id>`, for an app whose
+pinned spec deploys its upload, uploads and deploys without detecting again: the spec names the upload,
+not a copy of it, so the deploy builds the new files, and the archive's digest is what tells it they
+are new (R-311). Detection — a build, a trial run and a scan — would only propose the setup the app
+already has. `--detect` asks for it, and accepts with `confirm`, replacing the setup (R-022). An app set
+up from a repository or an image deploys that whatever is uploaded, so uploading to one is refused
+without `--detect`. MCP's `pando_upload_source` says the same: deploy next, and detect again only when
+how the app builds or runs changed.
+
 **[D] The console sends files the same way (issue #41).** Add app takes a folder or files — chosen, or
 dropped; a single `index.html` is enough — and packs them in the browser into the archive the CLI sends:
 a gzipped tar, paths relative to the app's root, regular files only, with the CLI's list of rebuilt

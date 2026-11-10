@@ -3591,7 +3591,7 @@
       "path": "pando deploy",
       "use": "deploy <app|path>",
       "short": "Deploy an app, or a directory on this machine",
-      "long": "With an app ID, deploys that app.\nWith a path, packs the directory, uploads it as the app's source, and deploys that.\n\nThe second form is for an agent: something that has just\ngenerated an app cannot commit and push, but it can run a command.",
+      "long": "With an app ID, deploys that app.\nWith a path, packs the directory, uploads it as the app's source, and deploys that.\n\nThe second form is for an agent: something that has just\ngenerated an app cannot commit and push, but it can run a command.\n\nWith --app, an app already set up to deploy uploaded files keeps its setup:\nthe new files are uploaded and deployed. --detect works out its setup again.",
       "example": "",
       "aliases": [],
       "hidden": false,
@@ -3603,6 +3603,14 @@
           "type": "string",
           "default": "",
           "usage": "deploy a directory as an existing app, instead of creating one",
+          "required": false
+        },
+        {
+          "name": "detect",
+          "shorthand": "",
+          "type": "bool",
+          "default": "false",
+          "usage": "with --app, work out the app's setup again from the directory and replace the one it has",
           "required": false
         },
         {
