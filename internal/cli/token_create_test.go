@@ -30,6 +30,7 @@ func TestR058_TokenCreateMintsADelegatedTokenInTheBrowser(t *testing.T) {
 		page := approvalPage(t, api, address)
 		require.Equal(t, "laptop agent", page.Get("name"))
 		require.Empty(t, page.Get("kind"), "delegated is the default")
+		require.Equal(t, "token", page.Get("for"), "the page words a token, not a sign-in")
 		resp := visit(t, "http://127.0.0.1:"+page.Get("port")+"/callback?code=c&state="+url.QueryEscape(page.Get("state")))
 		require.Equal(t, api.url+"/admin/cli?created=1", resp.location, "the console says a token was made")
 		return nil

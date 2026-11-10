@@ -72,6 +72,7 @@ func TestR406_LoginSignsInThroughTheBrowser(t *testing.T) {
 		page = approvalPage(t, api, address)
 		require.Equal(t, "S256", page.Get("code_challenge_method"))
 		require.Contains(t, page.Get("name"), "CLI")
+		require.Empty(t, page.Get("for"), "a sign-in, not a token to print")
 		loopback := "http://127.0.0.1:" + page.Get("port") + "/callback"
 
 		// Another page probing the port, or a stale tab, is turned away and

@@ -161,7 +161,7 @@ describe('the approval page', () => {
     const redirect = 'http://127.0.0.1:49152/callback?code=c&state=state-0123456789abcdef';
     serve(() => reply({ code: 'c', redirect_url: redirect }, 201));
     const navigate = vi.fn();
-    const asService = search.replace('laptop+CLI', 'nightly+agent') + '&kind=service';
+    const asService = search.replace('laptop+CLI', 'nightly+agent') + '&kind=service&for=token';
     screen = mount(<CliSignIn username="ada" search={asService} navigate={navigate} />);
 
     expect(screen.text()).toContain('Create a service token');
@@ -173,9 +173,18 @@ describe('the approval page', () => {
     expect(sent[0]?.body).toMatchObject({ name: 'nightly agent', kind: 'service' });
   });
 
-  it('says a token was made when pando token create sends the browser back', () => {
+  it('asks to approve a delegated token for pando token create', () => {
+    screen = mount(<CliSignIn username="ada" search={search.replace('laptop+CLI', 'ci') + '&for=token'} />);
+    expect(screen.text()).toContain('Create a token');
+    expect(screen.text()).toContain('“ci” will act as ada');
+    expect(screen.text()).toContain('Approve only if you ran pando token create yourself just now.');
+    expect(cliRequest(search + '&for=token')).toEqual(cliRequest(search));
+  });
+
+  it('says only that it was approved when pando token create sends the browser back', () => {
     screen = mount(<CliSignIn search="?created=1" />);
-    expect(screen.text()).toContain('Token created');
+    expect(screen.text()).toContain('Approved');
+    expect(screen.text()).not.toContain('created');
   });
 
   it('explains an address pando login did not make', () => {

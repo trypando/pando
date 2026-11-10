@@ -130,6 +130,11 @@ func approveInBrowser(cmd *cobra.Command, server string, noBrowser bool, a appro
 	if a.kind != "" {
 		q.Set("kind", a.kind)
 	}
+	// For the console's page alone, which words a token being created
+	// differently from a sign-in. The server is never sent it.
+	if a.done == "created" {
+		q.Set("for", "token")
+	}
 
 	var code string
 	if !noBrowser {

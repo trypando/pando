@@ -60,6 +60,11 @@ export function cliRequest(search: string): CliRequest | null {
   return req;
 }
 
+/** Whether `pando token create` opened the page, rather than `pando login`. */
+export function forToken(search: string): boolean {
+  return new URLSearchParams(search).get('for') === 'token';
+}
+
 /** Where the CLI sent the browser back to say how it ended, if it did. */
 export function outcome(search: string): 'signed_in' | 'created' | 'canceled' | null {
   const q = new URLSearchParams(search);
@@ -149,7 +154,7 @@ export function CliSignIn({
     );
   }
   if (ended === 'created') {
-    return <Ended heading="Token created" lede="Go back to your terminal. You can close this tab." />;
+    return <Ended heading="Approved" lede="Go back to your terminal. You can close this tab." />;
   }
   if (ended === 'canceled' || canceled) {
     return (
@@ -187,20 +192,21 @@ export function CliSignIn({
 
   const who = username ? `as ${username}` : 'as you';
   const service = req.kind === 'service';
+  const token = service || forToken(search);
+  let heading = 'Sign in the CLI';
+  let lede = `“${req.name}” is asking to sign in to Pando ${who}. It gets a token that can do everything you can, until you revoke it under API and tools.`;
+  if (service) {
+    heading = 'Create a service token';
+    lede = `“${req.name}” will reach only the apps shared with it, until it is revoked under API and tools.`;
+  } else if (token) {
+    heading = 'Create a token';
+    lede = `“${req.name}” will act ${who} and can do everything you can, until you revoke it under API and tools.`;
+  }
   return (
-    <Frame
-      heading={service ? 'Create a service token' : 'Sign in the CLI'}
-      lede={
-        service
-          ? `“${req.name}” will reach only the apps shared with it, until it is revoked under API and tools.`
-          : `“${req.name}” is asking to sign in to Pando ${who}. It gets a token that can do everything you can, until you revoke it under API and tools.`
-      }
-    >
+    <Frame heading={heading} lede={lede}>
       <div style={stack}>
         <p style={{ font: 'var(--type-body-ui)', color: 'var(--ink-secondary)', margin: 0 }}>
-          {service
-            ? 'Approve only if you ran pando token create yourself just now.'
-            : 'Approve only if you ran pando login yourself just now.'}
+          Approve only if you ran {token ? 'pando token create' : 'pando login'} yourself just now.
         </p>
         {approve.isError && <Banner tone="failed">{withRemedy(approve.error)}</Banner>}
         <Button

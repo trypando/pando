@@ -470,7 +470,7 @@ uses, and pasting a code back into the terminal one is using needs nothing new o
 
 **[D] `pando token create` is approved the same way** (issue #396). The CLI holds only a token, and a
 token cannot mint a token, so a token it prints rather than stores goes through this flow under the name
-given, and the page sends the browser back to `/admin/cli?created=1`. With `--service` the address and
+given. Its address adds `for=token`, which only the console's page reads, to word the approval as a token rather than a sign-in, and the browser is sent back to `/admin/cli?created=1`, which says only that it was approved: the CLI's collection can still fail. With `--service` the address and
 the approval carry `kind=service`: the person approving must hold `install.tokens.manage` when they
 approve and again when the CLI collects, and the token minted is a service token with no owner
 (R-060), recorded in the audit log as made by the session that approved it, as POST /tokens/service
