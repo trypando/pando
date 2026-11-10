@@ -105,10 +105,26 @@ func loginCmd(server *string) *cobra.Command {
 			return browserLogin(cmd, url, noBrowser)
 		},
 	}
-	cmd.Flags().StringVar(&username, "username", "", "sign in with this username and a password instead of a browser")
-	cmd.Flags().BoolVar(&noBrowser, "no-browser", false, "print the address to open on another computer, and paste the code it shows")
-	cmd.MarkFlagsMutuallyExclusive("username", "no-browser")
+	cmd.Flags().StringVar(&username, flagUsername, "", "sign in with this username and a password instead of a browser")
+	cmd.Flags().BoolVar(&noBrowser, flagNoBrowser, false, noBrowserHelp)
+	cmd.MarkFlagsMutuallyExclusive(flagUsername, flagNoBrowser)
 	return cmd
+}
+
+// The flags pando login and pando token create share.
+const (
+	flagUsername  = "username"
+	flagNoBrowser = "no-browser"
+	noBrowserHelp = "print the address to open on another computer, and paste the code it shows"
+)
+
+// tokensPath is where your own tokens are, or with service the
+// installation's service tokens (R-060).
+func tokensPath(service bool) string {
+	if service {
+		return "/tokens/service"
+	}
+	return "/tokens"
 }
 
 // tokenName is what a token made for this machine is called: "laptop CLI".
@@ -158,7 +174,7 @@ func passwordLogin(cmd *cobra.Command, url, username string) error {
 	var issued struct {
 		Secret string `json:"secret"`
 	}
-	if err := anon.Do("POST", "/tokens",
+	if err := anon.Do("POST", tokensPath(false),
 		map[string]any{"name": tokenName()}, &issued); err != nil {
 		return err
 	}
@@ -1860,11 +1876,7 @@ func tokenCmd(client func() (*Client, error)) *cobra.Command {
 					RevokedAt *string `json:"revoked_at"`
 				} `json:"tokens"`
 			}
-			path := "/tokens"
-			if service {
-				path = "/tokens/service"
-			}
-			if err := c.Do("GET", path, nil, &out); err != nil {
+			if err := c.Do("GET", tokensPath(service), nil, &out); err != nil {
 				return err
 			}
 			t := table(cmd.OutOrStdout(), "NAME", "STATE", "ID")
@@ -1956,9 +1968,9 @@ func tokenCreateCmd(client func() (*Client, error)) *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&service, "service", false, "create a service token, its own principal")
-	cmd.Flags().BoolVar(&noBrowser, "no-browser", false, "print the address to open on another computer, and paste the code it shows")
-	cmd.Flags().StringVar(&username, "username", "", "approve with this username and a password instead of a browser")
-	cmd.MarkFlagsMutuallyExclusive("username", "no-browser")
+	cmd.Flags().BoolVar(&noBrowser, flagNoBrowser, false, noBrowserHelp)
+	cmd.Flags().StringVar(&username, flagUsername, "", "approve with this username and a password instead of a browser")
+	cmd.MarkFlagsMutuallyExclusive(flagUsername, flagNoBrowser)
 	return cmd
 }
 
@@ -1980,12 +1992,8 @@ func passwordToken(cmd *cobra.Command, server, username, name string, service bo
 	// The session has one job; it ends whatever happens.
 	defer func() { _ = anon.Do("DELETE", sessionsPath, nil, nil) }()
 
-	path := "/tokens"
-	if service {
-		path = "/tokens/service"
-	}
 	var issued issuedToken
-	err = anon.Do("POST", path, map[string]any{"name": name}, &issued)
+	err = anon.Do("POST", tokensPath(service), map[string]any{"name": name}, &issued)
 	return issued, err
 }
 
