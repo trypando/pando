@@ -672,16 +672,20 @@ func TestDeployingADirectoryAsAnExistingAppSkipsCreation(t *testing.T) {
 	require.True(t, api.sawPath("/apps/app_01HQ8/source"))
 }
 
-// pinnedSpecs is GET /specs for an app whose pinned revision deploys from
-// sourceType.
-func pinnedSpecs(sourceType string) map[string]any {
-	return map[string]any{
+// pinnedTo answers GET /specs and the pinned revision for an app whose pinned
+// revision deploys from sourceType. The list carries no bodies, as the server
+// sends it (state.ListRevisions); only the revision itself has one.
+func (f *fakeAPI) pinnedTo(sourceType string) *fakeAPI {
+	return f.reply("GET /apps/app_01HQ8/specs", map[string]any{
 		"pinned_spec_id": "spec_01HQ8",
 		"revisions": []map[string]any{
-			{"id": "spec_01HQ7", "body": map[string]any{"source": map[string]string{"type": "git"}}},
-			{"id": "spec_01HQ8", "body": map[string]any{"source": map[string]string{"type": sourceType}}},
+			{"id": "spec_01HQ8", "revision": 2},
+			{"id": "spec_01HQ7", "revision": 1},
 		},
-	}
+	}).reply("GET /apps/app_01HQ8/specs/spec_01HQ8", map[string]any{
+		"id": "spec_01HQ8", "revision": 2,
+		"body": map[string]any{"source": map[string]string{"type": sourceType}},
+	})
 }
 
 // R-022: an app already set up to deploy its upload keeps that setup. The new
@@ -690,8 +694,7 @@ func pinnedSpecs(sourceType string) map[string]any {
 func TestR022_RedeployingADirectoryKeepsTheAppsSetup(t *testing.T) {
 	dir := writeTree(t, map[string]string{"main.go": "package main"})
 
-	api := newAPI(t).
-		reply("GET /apps/app_01HQ8/specs", pinnedSpecs("upload")).
+	api := newAPI(t).pinnedTo("upload").
 		reply("POST /apps/app_01HQ8/deployments", map[string]any{"id": "dep_01HQ8"})
 
 	got := run(t, api, "", "deploy", dir, "--app", "app_01HQ8")
@@ -710,8 +713,7 @@ func TestR022_RedeployingADirectoryKeepsTheAppsSetup(t *testing.T) {
 func TestR022_DetectWorksOutASetUpAppsSetupAgain(t *testing.T) {
 	dir := writeTree(t, map[string]string{"main.go": "package main"})
 
-	api := newAPI(t).
-		reply("GET /apps/app_01HQ8/specs", pinnedSpecs("upload")).
+	api := newAPI(t).pinnedTo("upload").
 		reply("GET /apps/app_01HQ8/detection", map[string]any{
 			"status":    "succeeded",
 			"detection": map[string]any{"winning_bid": map[string]string{"detector": "Go", "strategy": "buildpack"}},
@@ -732,7 +734,7 @@ func TestDeployingADirectoryToAnAppSetUpFromElsewhereNeedsDetect(t *testing.T) {
 	dir := writeTree(t, map[string]string{"main.go": "package main"})
 
 	for sourceType, noun := range map[string]string{"git": "repository", "image": "image", "": "source"} {
-		api := newAPI(t).reply("GET /apps/app_01HQ8/specs", pinnedSpecs(sourceType))
+		api := newAPI(t).pinnedTo(sourceType)
 
 		got := run(t, api, "", "deploy", dir, "--app", "app_01HQ8")
 		require.ErrorContains(t, got.err, "set up to deploy from its "+noun)
@@ -746,7 +748,7 @@ func TestDeployingADirectoryToAnAppSetUpFromElsewhereNeedsDetect(t *testing.T) {
 // accepts none, so the variables would be dropped without a word.
 func TestDeployingADirectoryRefusesEnvForAnAppKeepingItsSetup(t *testing.T) {
 	dir := writeTree(t, map[string]string{"main.go": "package main"})
-	api := newAPI(t).reply("GET /apps/app_01HQ8/specs", pinnedSpecs("upload"))
+	api := newAPI(t).pinnedTo("upload")
 
 	got := run(t, api, "", "deploy", dir, "--app", "app_01HQ8", "--env", "A=1")
 	require.ErrorContains(t, got.err, "app app_01HQ8 keeps its setup")
@@ -760,6 +762,16 @@ func TestDeployingADirectoryReportsAnAppThatCannotBeRead(t *testing.T) {
 
 	got := run(t, api, "", "deploy", dir, "--app", "app_01HQ8")
 	require.ErrorContains(t, got.err, "There is no app app_01HQ8.")
+	require.False(t, api.sawPath("/apps/app_01HQ8/source"))
+}
+
+func TestDeployingADirectoryReportsAPinnedRevisionThatCannotBeRead(t *testing.T) {
+	dir := writeTree(t, map[string]string{"main.go": "package main"})
+	api := newAPI(t).pinnedTo("upload").fail("GET /apps/app_01HQ8/specs/spec_01HQ8", http.StatusNotFound,
+		map[string]string{"code": "NOT_FOUND", "message": "There is no such revision of this app's spec."})
+
+	got := run(t, api, "", "deploy", dir, "--app", "app_01HQ8")
+	require.ErrorContains(t, got.err, "There is no such revision of this app's spec.")
 	require.False(t, api.sawPath("/apps/app_01HQ8/source"))
 }
 

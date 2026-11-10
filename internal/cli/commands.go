@@ -891,12 +891,10 @@ func (c *Client) uploadSetup(appID string, env []string, redetect bool) (bool, e
 	if appID == "" {
 		return false, nil
 	}
+	// The list says which revision is pinned, without bodies; the revision
+	// itself says what it deploys from.
 	var specs struct {
 		PinnedSpecID string `json:"pinned_spec_id"`
-		Revisions    []struct {
-			ID   string        `json:"id"`
-			Body *revisionBody `json:"body"`
-		} `json:"revisions"`
 	}
 	if err := c.Do("GET", "/apps/"+url.PathEscape(appID)+"/specs", nil, &specs); err != nil {
 		return false, err
@@ -904,11 +902,15 @@ func (c *Client) uploadSetup(appID string, env []string, redetect bool) (bool, e
 	if specs.PinnedSpecID == "" {
 		return false, nil
 	}
+	var pinned struct {
+		Body *revisionBody `json:"body"`
+	}
+	if err := c.Do("GET", "/apps/"+url.PathEscape(appID)+"/specs/"+url.PathEscape(specs.PinnedSpecID), nil, &pinned); err != nil {
+		return false, err
+	}
 	sourceType := ""
-	for _, rev := range specs.Revisions {
-		if rev.ID == specs.PinnedSpecID && rev.Body != nil {
-			sourceType = rev.Body.Source.Type
-		}
+	if pinned.Body != nil {
+		sourceType = pinned.Body.Source.Type
 	}
 	switch {
 	case redetect:
