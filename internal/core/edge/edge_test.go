@@ -19,6 +19,7 @@ type fakeRuntime struct {
 	supports bool
 	edges    map[string]api.EdgePlan
 	applyErr error
+	removed  []string
 }
 
 func (*fakeRuntime) Kind() string                                     { return "fake" }
@@ -40,6 +41,7 @@ func (f *fakeRuntime) ObserveEdge(_ context.Context, name string) (api.EdgeState
 	return api.EdgeState{Present: ok, Running: ok}, nil
 }
 func (f *fakeRuntime) RemoveEdge(_ context.Context, name string) error {
+	f.removed = append(f.removed, name)
 	delete(f.edges, name)
 	return nil
 }
@@ -56,6 +58,8 @@ type fakeRouting struct {
 	needs bool
 	got   api.EdgeRequest
 	issue *api.CertificateIssue
+	name  string
+	err   error
 }
 
 func (*fakeRouting) Kind() string                                     { return "fake" }
@@ -64,10 +68,13 @@ func (*fakeRouting) Configure(context.Context, json.RawMessage) error { return n
 func (*fakeRouting) HealthCheck(context.Context) error                { return nil }
 func (f *fakeRouting) Edge(_ context.Context, r api.EdgeRequest) (api.EdgePlan, bool, error) {
 	f.got = r
+	if f.err != nil {
+		return api.EdgePlan{}, false, f.err
+	}
 	if !f.needs {
 		return api.EdgePlan{}, false, nil
 	}
-	return api.EdgePlan{Image: "traefik:v3.2", Issue: f.issue}, true, nil
+	return api.EdgePlan{Name: f.name, Image: "traefik:v3.2", Issue: f.issue}, true, nil
 }
 
 func setup(t *testing.T, rt *fakeRuntime, routes map[string]*fakeRouting) *Service {
