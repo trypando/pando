@@ -19,6 +19,16 @@ Unreleased above it. -->
 
 ## [Unreleased]
 
+### Fixed
+
+- **A routing adapter's provider API timing out no longer takes the install offline** (#400). When a
+  routing adapter could not be checked — the Cloudflare adapter's tunnel token request timing out,
+  for one — Pando removed the edge it was already running, so the console and every app routed
+  through it went unreachable until the provider recovered, and restarting Pando did not help. The
+  edge now keeps running on its last good configuration, and the adapter's status shows it as running
+  with a message saying why it could not be checked. An edge is still removed when its adapter is
+  removed, disabled, or stops asking for one.
+
 ## [0.20.0] - 2026-11-10
 
 ### Security
