@@ -110,3 +110,25 @@ func TestR174_KeepingAnEdgeDoesNotKeepOnesNothingAsksFor(t *testing.T) {
 	_ = s.Reconcile(context.Background())
 	require.NotContains(t, rt.edges, "cloudflared")
 }
+
+// An adapter that renames its edge and then fails to apply the new one keeps
+// the old, still-running edge: the new name is only remembered once it runs.
+func TestR174_ARenamedEdgeThatFailsToApplyKeepsTheOldOne(t *testing.T) {
+	rt := &fakeRuntime{supports: true, edges: map[string]api.EdgePlan{}}
+	r := &fakeRouting{needs: true, name: "edge-old"}
+	s := setup(t, rt, map[string]*fakeRouting{"rte_cloudflare": r})
+	require.NoError(t, s.Reconcile(context.Background()))
+	require.Contains(t, rt.edges, "edge-old")
+
+	r.name = "edge-new"
+	rt.applyErr = errs.New(errs.AdapterFailed, "the image could not be pulled.")
+	require.Error(t, s.Reconcile(context.Background()))
+	require.Contains(t, rt.edges, "edge-old", "the running edge is kept")
+	require.Empty(t, rt.removed)
+
+	// Once the new edge applies, the old one is no longer wanted.
+	rt.applyErr = nil
+	require.NoError(t, s.Reconcile(context.Background()))
+	require.Contains(t, rt.edges, "edge-new")
+	require.NotContains(t, rt.edges, "edge-old")
+}

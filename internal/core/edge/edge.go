@@ -166,7 +166,6 @@ func (s *Service) Reconcile(ctx context.Context) error {
 		if plan.Name == "" {
 			plan.Name = ref
 		}
-		s.remember(ref, plan.Name)
 		if plan.ProxyAlias == "" {
 			plan.ProxyAlias = hostOf(s.ProxyUpstream)
 		}
@@ -196,9 +195,15 @@ func (s *Service) Reconcile(ctx context.Context) error {
 			}
 		}
 		if err := rt.ApplyEdge(ctx, plan); err != nil {
+			// The edge that is running is still the last one remembered —
+			// a renamed plan that failed to apply must not hand that edge
+			// to the removal below.
 			keep(ref, err)
 			continue
 		}
+		// Remembered only once it runs: until then, the edge to protect is
+		// the previous one.
+		s.remember(ref, plan.Name)
 		observed, err := rt.ObserveEdge(ctx, plan.Name)
 		if err != nil {
 			keep(ref, err)
