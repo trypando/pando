@@ -19,6 +19,13 @@ Unreleased above it. -->
 
 ## [Unreleased]
 
+### Security
+
+- **Built with Go 1.27.4**, which fixes GO-2026-6859 (CVE-2026-97054) in `net/http`: a race between
+  `http.MaxBytesReader` and the request's headers could crash an HTTP/1 server, and Pando reads
+  request bodies that way, including on webhook endpoints that take requests without a Pando sign-in.
+  Pando 0.20.0 and earlier were built with Go 1.27.3 or older and are affected (#401).
+
 ### Fixed
 
 - **A routing adapter's provider API timing out no longer takes the install offline** (#400). When a
