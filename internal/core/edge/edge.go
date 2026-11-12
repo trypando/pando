@@ -64,6 +64,10 @@ type Service struct {
 
 	mu     sync.RWMutex
 	status map[string]Status
+	// names is the edge each routing adapter last asked for, by adapter ref.
+	// A pass in which that adapter fails produces no plan, and so no name;
+	// this is how its edge is still known to be wanted (R-174).
+	names map[string]string
 }
 
 // CertificateIssuer issues an edge's certificates and returns those it holds.
@@ -117,6 +121,29 @@ func (s *Service) Reconcile(ctx context.Context) error {
 			firstErr = err
 		}
 	}
+	// keep is fail for an adapter that is still configured: its edge stays
+	// wanted, so a running one keeps serving on its last good configuration.
+	// The edge is the data plane; the adapter's failure is usually its
+	// control plane — a provider's API timing out — and tearing a working
+	// tunnel down over that turns a slow API call into an outage of Pando
+	// and every app routed through it (R-174).
+	keep := func(ref string, err error) {
+		fail(ref, err)
+		name := s.nameFor(ref)
+		wanted[name] = true
+		if !caps.SupportsEdge {
+			return
+		}
+		observed, oerr := rt.ObserveEdge(ctx, name)
+		if oerr != nil || !observed.Present {
+			return
+		}
+		results[ref] = Status{
+			Running:   observed.Running,
+			Message:   "Pando kept the edge running on its last configuration, because the adapter could not be checked: " + messageOf(err),
+			CheckedAt: now,
+		}
+	}
 
 	refs := s.Registry.ByCategory(api.CategoryRouting)
 	sort.Strings(refs)
@@ -129,10 +156,11 @@ func (s *Service) Reconcile(ctx context.Context) error {
 			Ref: ref, ProxyUpstream: s.ProxyUpstream, EdgeConfig: caps.EdgeConfig, Clustered: clustered,
 		})
 		if err != nil {
-			fail(ref, err)
+			keep(ref, err)
 			continue
 		}
 		if !needs {
+			s.forget(ref)
 			continue
 		}
 		if plan.Name == "" {
@@ -156,7 +184,7 @@ func (s *Service) Reconcile(ctx context.Context) error {
 		var issueErr error
 		if plan.Issue != nil {
 			if s.Certificates == nil {
-				fail(ref, errs.New(errs.AdapterUnavailable,
+				keep(ref, errs.New(errs.AdapterUnavailable,
 					fmt.Sprintf("The %s routing adapter needs Pando to issue its certificates, and this Pando has nowhere to keep them.", ref)).
 					WithRemedy("Configure a secrets adapter, restart Pando, and try again."))
 				continue
@@ -167,12 +195,18 @@ func (s *Service) Reconcile(ctx context.Context) error {
 			}
 		}
 		if err := rt.ApplyEdge(ctx, plan); err != nil {
-			fail(ref, err)
+			// The edge that is running is still the last one remembered —
+			// a renamed plan that failed to apply must not hand that edge
+			// to the removal below.
+			keep(ref, err)
 			continue
 		}
+		// Remembered only once it runs: until then, the edge to protect is
+		// the previous one.
+		s.remember(ref, plan.Name)
 		observed, err := rt.ObserveEdge(ctx, plan.Name)
 		if err != nil {
-			fail(ref, err)
+			keep(ref, err)
 			continue
 		}
 		message := observed.Detail
@@ -191,9 +225,11 @@ func (s *Service) Reconcile(ctx context.Context) error {
 			if wanted[name] {
 				continue
 			}
-			// An adapter removed, disabled, switched to somebody else's
-			// Traefik, or failing to configure. Its certificate volume is
-			// kept by the runtime, so switching back does not re-issue.
+			// An adapter removed, disabled, or switched to somebody else's
+			// Traefik. Never one that is still configured and only failing
+			// this pass: keep holds its edge in wanted. Its certificate
+			// volume is kept by the runtime, so switching back does not
+			// re-issue.
 			if err := rt.RemoveEdge(ctx, name); err != nil {
 				s.logger().Warn("edge not removed", zap.String("edge", name), zap.Error(err))
 				continue
@@ -247,6 +283,33 @@ func (s *Service) RunFollower(ctx context.Context, interval time.Duration) {
 		case <-s.clock().After(interval):
 		}
 	}
+}
+
+// nameFor is the edge an adapter last asked for, or its ref — the name an
+// edge gets when its plan does not set one — when this process has not seen
+// a plan from it yet, as after a restart during a provider outage.
+func (s *Service) nameFor(ref string) string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if name, ok := s.names[ref]; ok {
+		return name
+	}
+	return ref
+}
+
+func (s *Service) remember(ref, name string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.names == nil {
+		s.names = map[string]string{}
+	}
+	s.names[ref] = name
+}
+
+func (s *Service) forget(ref string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.names, ref)
 }
 
 // clustered reports whether the cluster has more than one host.
