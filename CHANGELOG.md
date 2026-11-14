@@ -19,6 +19,8 @@ Unreleased above it. -->
 
 ## [Unreleased]
 
+## [0.20.1] - 2026-11-14
+
 ### Security
 
 - **Built with Go 1.27.4**, which fixes GO-2026-6859 (CVE-2026-97054) in `net/http`: a race between
@@ -1710,7 +1712,8 @@ review the proposal as usual.
 The first release. Its notes were generated from the commit log, which is what this file now exists
 to replace; see the release page for the artifact list.
 
-[Unreleased]: https://github.com/trypando/pando/compare/v0.20.0...main
+[Unreleased]: https://github.com/trypando/pando/compare/v0.20.1...main
+[0.20.1]: https://github.com/trypando/pando/compare/v0.20.0...v0.20.1
 [0.20.0]: https://github.com/trypando/pando/compare/v0.19.1...v0.20.0
 [0.19.1]: https://github.com/trypando/pando/compare/v0.19.0...v0.19.1
 [0.19.0]: https://github.com/trypando/pando/compare/v0.18.0...v0.19.0
