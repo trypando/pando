@@ -136,7 +136,7 @@ RUN --mount=type=cache,target=/cache/go-mod --mount=type=cache,target=/cache/go-
 # lists what the image actually holds: a scanner reads it to know what is
 # installed, and an entry for a package manager that is not there is a finding
 # about nothing.
-FROM dhi.io/alpine-base:3.24-dev@sha256:6930a2280f6e5dbbb5f8a0b62897114fc28ee883e3786832c2a9cda8e73e0ca2 AS packages
+FROM dhi.io/alpine-base:3.24-dev@sha256:266554e75cb00f88effe4048ba78b6f628d6a5ca67ac9e9727ae37a4a1299ce5 AS packages
 ARG RAILPACK_VERSION=0.40.0
 ARG MISE_VERSION=2026.9.12
 ARG TARGETARCH
