@@ -226,8 +226,11 @@ func (a *Adapter) fetch(ctx context.Context) (*crewjam.EntityDescriptor, error) 
 	return parseMetadata(body)
 }
 
-// parseMetadata reads an EntityDescriptor, or the first one with an IdP role
-// inside an EntitiesDescriptor.
+// parseMetadata reads an EntityDescriptor, or the one entity with an IdP role
+// inside an EntitiesDescriptor. An aggregate naming more than one IdP is
+// refused: nothing in it says which one this provider is, and trusting the
+// first would let whoever is listed first sign people in
+// (GHSA-fvc9-q662-6qhg).
 func parseMetadata(body []byte) (*crewjam.EntityDescriptor, error) {
 	bad := func(err error) error {
 		return errs.Wrap(errs.ValidInvalid, "That is not SAML identity provider metadata.", err).
@@ -243,12 +246,18 @@ func parseMetadata(body []byte) (*crewjam.EntityDescriptor, error) {
 		if err := xml.Unmarshal(body, entities); err != nil {
 			return nil, bad(err)
 		}
-		for i, e := range entities.EntityDescriptors {
-			if len(e.IDPSSODescriptors) > 0 {
-				return &entities.EntityDescriptors[i], nil
-			}
+		idps := identityProviders(entities)
+		switch {
+		case len(idps) == 0:
+			return nil, bad(errors.New("no entity with an IDPSSODescriptor"))
+		case len(idps) > 1:
+			return nil, errs.Newf(errs.ValidInvalid,
+				"This metadata lists %d identity providers, and Pando cannot tell which one is yours.", len(idps)).
+				WithRemedy("Use the metadata your provider publishes for this one application, which describes only that provider, " +
+					"not a federation's combined metadata.")
 		}
-		return nil, bad(errors.New("no entity with an IDPSSODescriptor"))
+		entity = idps[0]
+		err = nil
 	}
 	if err != nil {
 		return nil, bad(err)
@@ -257,6 +266,21 @@ func parseMetadata(body []byte) (*crewjam.EntityDescriptor, error) {
 		return nil, err
 	}
 	return entity, nil
+}
+
+// identityProviders returns every entity with an IdP role in an aggregate,
+// nested aggregates included.
+func identityProviders(entities *crewjam.EntitiesDescriptor) []*crewjam.EntityDescriptor {
+	var idps []*crewjam.EntityDescriptor
+	for i := range entities.EntityDescriptors {
+		if len(entities.EntityDescriptors[i].IDPSSODescriptors) > 0 {
+			idps = append(idps, &entities.EntityDescriptors[i])
+		}
+	}
+	for i := range entities.EntitiesDescriptors {
+		idps = append(idps, identityProviders(&entities.EntitiesDescriptors[i])...)
+	}
+	return idps
 }
 
 func checkIDP(idp *crewjam.EntityDescriptor) error {
