@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"math/big"
 	"net/url"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -79,6 +80,36 @@ func TestSAMLConfigurationIsCheckedWhenSaved(t *testing.T) {
 		require.Equal(t, errs.ValidInvalid, errs.CodeOf(err), name)
 	}
 	require.NoError(t, adapter(t, nil).HealthCheck(context.Background()))
+}
+
+// A federation's aggregate lists many IdPs. Taking the first would trust
+// whichever is listed first (GHSA-fvc9-q662-6qhg), so one with several is
+// refused, nested aggregates included; one with a single IdP still works.
+func TestSAMLRefusesAnAggregateWithSeveralIdentityProviders(t *testing.T) {
+	entity := func() string {
+		md := idpMetadata(t)
+		return strings.Replace(md, ` xmlns="urn:oasis:names:tc:SAML:2.0:metadata"`, "", 1)
+	}
+	configure := func(xml string) error {
+		raw, _ := json.Marshal(map[string]any{"idp_metadata_xml": xml})
+		return saml.New().Configure(context.Background(), raw)
+	}
+	const open, close = `<EntitiesDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata">`, `</EntitiesDescriptor>`
+
+	require.NoError(t, configure(open+entity()+close), "one IdP")
+	require.NoError(t, configure(open+`<EntitiesDescriptor>`+entity()+`</EntitiesDescriptor>`+close), "one nested IdP")
+
+	for name, xml := range map[string]string{
+		"two":    open + entity() + entity() + close,
+		"nested": open + entity() + `<EntitiesDescriptor>` + entity() + `</EntitiesDescriptor>` + close,
+		"none":   open + `<EntityDescriptor entityID="x"><SPSSODescriptor protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol"/></EntityDescriptor>` + close,
+		// An IdP picked from an aggregate is checked as a lone one is.
+		"no signing key": open + regexp.MustCompile(`(?s)<KeyDescriptor.*?</KeyDescriptor>`).ReplaceAllString(entity(), "") + close,
+	} {
+		err := configure(xml)
+		require.Error(t, err, name)
+		require.Equal(t, errs.ValidInvalid, errs.CodeOf(err), name)
+	}
 }
 
 func TestR043_SAMLPublishesServiceProviderMetadata(t *testing.T) {

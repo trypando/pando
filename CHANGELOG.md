@@ -19,6 +19,47 @@ Unreleased above it. -->
 
 ## [Unreleased]
 
+## [0.20.2] - 2026-11-17
+
+This release fixes vulnerabilities in SAML sign-in. If you have a SAML identity provider configured,
+upgrade now. Installations without one are not affected by them.
+
+### Security
+
+- **Update the SAML library Pando uses to crewjam/saml 0.6.3**, fixing three advisories that reach
+  Pando's SAML sign-in. All affect Pando 0.20.1 and earlier with a SAML provider configured:
+  - **[GHSA-gcm9-vvgq-cp65](https://github.com/crewjam/saml/security/advisories/GHSA-gcm9-vvgq-cp65)**
+    (high, CVSS 7.5). An unsigned response of a few hundred kilobytes, posted to a SAML provider's
+    callback without signing in, could hold a CPU core for seconds and allocate gigabytes.
+  - **[GHSA-2j2h-hc9p-g6gw](https://github.com/crewjam/saml/security/advisories/GHSA-2j2h-hc9p-g6gw)**
+    (medium, CVSS 6.8). Someone holding a response the provider signed for them could add a namespace
+    declaration, which the signature does not cover, and have Pando read a different value for an
+    attribute's name or the response's validity. An attribute the person controls could then be read
+    as their groups or email.
+  - **[GHSA-88j8-qp3x-89g7](https://github.com/crewjam/saml/security/advisories/GHSA-88j8-qp3x-89g7)**
+    (medium, CVSS 5.3). Malformed responses, which need no valid signature, made the request handling
+    them panic.
+- **SAML metadata listing several identity providers is refused.** When a provider's metadata was an
+  aggregate, such as a federation's, Pando trusted the first identity provider in it, so whoever was
+  listed first could sign people in. This is the flaw described in
+  [GHSA-fvc9-q662-6qhg](https://github.com/crewjam/saml/security/advisories/GHSA-fvc9-q662-6qhg),
+  which Pando's own metadata parsing shared. Pando now accepts an aggregate only when it holds one
+  identity provider, and checks that provider as it checks metadata given alone. Affects Pando 0.20.1
+  and earlier.
+
+### Changed
+
+- **The Kubernetes manifest's BuildKit is 0.35.0**, up from 0.34.2.
+
+### Upgrade notes
+
+- **A SAML provider whose metadata lists more than one identity provider stops working** on the first
+  metadata read after upgrading. Its **Check connection** says so. Replace its metadata with the
+  metadata your provider publishes for this one application.
+- SAML responses are now refused when they are unsigned and carry more than one assertion, or when
+  their assertion has no `AuthnStatement`. Every mainstream identity provider sends one signed
+  assertion with an `AuthnStatement`, so no change is expected.
+
 ## [0.20.1] - 2026-11-14
 
 ### Security
