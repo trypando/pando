@@ -85,7 +85,7 @@ func TestSAMLConfigurationIsCheckedWhenSaved(t *testing.T) {
 // A federation's aggregate lists many IdPs. Taking the first would trust
 // whichever is listed first (GHSA-fvc9-q662-6qhg), so one with several is
 // refused, nested aggregates included; one with a single IdP still works.
-func TestSAMLRefusesAnAggregateWithSeveralIdentityProviders(t *testing.T) {
+func TestR043_SAMLRefusesAnAggregateWithSeveralIdentityProviders(t *testing.T) {
 	entity := func() string {
 		md := idpMetadata(t)
 		return strings.Replace(md, ` xmlns="urn:oasis:names:tc:SAML:2.0:metadata"`, "", 1)
