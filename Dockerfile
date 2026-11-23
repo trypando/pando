@@ -177,7 +177,7 @@ RUN apk add --no-cache bash curl git postgresql17-client su-exec tzdata \
 # in CI if a distrusted root is left either way.
 FROM alpine:3.24@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf AS ca-bundle
 
-FROM dhi.io/alpine-base:3.24@sha256:7b06d747fcb428a0699679955e903b13322c92c79d94ce94c108634f13a714f1
+FROM dhi.io/alpine-base:3.24@sha256:6278da77eb7e000c38b95711f93d199b2eb108e371a9eb95fb67b911c1f5e2cd
 COPY --from=packages /staging/ /
 COPY --from=ca-bundle /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 # Railpack's mise directory, writable by the server, which takes locks there.
