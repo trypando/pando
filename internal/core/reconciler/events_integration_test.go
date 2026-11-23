@@ -28,6 +28,9 @@ type eventRuntime struct {
 
 	mu       sync.Mutex
 	connects int
+	// caughtUp counts streams whose Watching event the reconciler has
+	// finished handling, catch-up included.
+	caughtUp int
 	drop     chan struct{}
 	// refuse fails every attempt to open a stream.
 	refuse bool
@@ -51,7 +54,13 @@ func (f *eventRuntime) WatchBundles(ctx context.Context, sink func(api.BundleEve
 	drop := f.drop
 	f.mu.Unlock()
 
+	// sink handles Watching synchronously: it marks the stream live, then
+	// makes the runtime's waiting apps due (catchUp). Count it once both are
+	// done, so a test can tell the catch-up will not land later.
 	sink(api.BundleEvent{Kind: api.BundleEventWatching})
+	f.mu.Lock()
+	f.caughtUp++
+	f.mu.Unlock()
 	for {
 		select {
 		case <-ctx.Done():
@@ -70,6 +79,13 @@ func (f *eventRuntime) dropStream() {
 	defer f.mu.Unlock()
 	close(f.drop)
 	f.drop = make(chan struct{})
+}
+
+// streamCaughtUp reports whether the open stream's catch-up has finished.
+func (f *eventRuntime) streamCaughtUp() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.connects > 0 && f.caughtUp == f.connects
 }
 
 func (f *eventRuntime) connections() int {
@@ -129,8 +145,15 @@ func released(db *state.DB, appID string) (time.Duration, bool) {
 
 // settledAll waits for every app to have been visited and left for the slow
 // sweep.
-func settledAll(t *testing.T, db *state.DB, ids ...string) {
+//
+// It first waits for the stream's catch-up: the reconciler marks the stream
+// live before catchUp runs, so a pass can leave every app for the slow sweep
+// in between, and catchUp then makes them due again, an extra visit a test
+// would see as the app being looked at for no reason.
+func settledAll(t *testing.T, db *state.DB, runtime *eventRuntime, ids ...string) {
 	t.Helper()
+	require.Eventually(t, runtime.streamCaughtUp, 10*time.Second, 20*time.Millisecond,
+		"the stream is open and its catch-up done")
 	require.Eventually(t, func() bool {
 		for _, id := range ids {
 			if left, ok := released(db, id); !ok || left < time.Minute {
@@ -165,7 +188,7 @@ func TestR148_AnExitedWorkloadIsReconciledWithoutWaitingForTheSweep(t *testing.T
 	rec := eventReconciler(db, runtime, clock.NewFake(time.Now()))
 	runLoop(t, rec)
 
-	settledAll(t, db, ids...)
+	settledAll(t, db, runtime, ids...)
 	before := runtime.seen()
 
 	runtime.setMissing(ids[0], true)
@@ -198,7 +221,7 @@ func TestASettledAppWaitsForTheSlowSweep(t *testing.T) {
 	rec := eventReconciler(db, runtime, clock.NewFake(time.Now()))
 	runLoop(t, rec)
 
-	settledAll(t, db, ids...)
+	settledAll(t, db, runtime, ids...)
 	left := leaseUntil(t, db, ids[0])
 	require.InDelta(t, reconciler.DefaultSettledRevisit.Seconds(), left.Seconds(), 30,
 		"due again after the slow sweep's interval")
@@ -231,7 +254,7 @@ func TestADroppedEventStreamReconnectsAndCatchesUp(t *testing.T) {
 	rec := eventReconciler(db, runtime, clk)
 	runLoop(t, rec)
 
-	settledAll(t, db, ids...)
+	settledAll(t, db, runtime, ids...)
 	require.Equal(t, 1, runtime.connections())
 	before := runtime.seen()
 
@@ -268,7 +291,7 @@ func TestAnEventForAnAppAnotherPassHoldsIsNotLost(t *testing.T) {
 	clk := clock.NewFake(time.Now())
 	rec := eventReconciler(db, runtime, clk)
 	runLoop(t, rec)
-	settledAll(t, db, ids...)
+	settledAll(t, db, runtime, ids...)
 	ctx := context.Background()
 
 	_, err := db.Exec(ctx, `UPDATE apps SET reconcile_lease_holder = 'rep_other:1',
@@ -304,7 +327,7 @@ func TestR151_AnEventForAFailedAppTouchesNothing(t *testing.T) {
 	runtime := newEventRuntime()
 	rec := eventReconciler(db, runtime, clock.NewFake(time.Now()))
 	runLoop(t, rec)
-	settledAll(t, db, ids[1])
+	settledAll(t, db, runtime, ids[1])
 
 	got, err := state.NewReconciles(db).Nudge(ctx, ids[0])
 	require.NoError(t, err)
@@ -369,7 +392,7 @@ func TestR193_ChangesBringASettledAppForward(t *testing.T) {
 	runtime := newEventRuntime()
 	rec := eventReconciler(db, runtime, clock.NewFake(time.Now()))
 	stop := runLoop(t, rec)
-	settledAll(t, db, ids...)
+	settledAll(t, db, runtime, ids...)
 	// Stopped, so no pass takes the apps between the writes and the check.
 	stop()
 	ctx := context.Background()
