@@ -19,6 +19,23 @@ Unreleased above it. -->
 
 ## [Unreleased]
 
+## [0.20.3] - 2026-11-23
+
+A maintenance release: dependency and base-image updates, with no change to how Pando behaves.
+
+### Security
+
+No new advisories.
+
+### Changed
+
+- **The server image is rebuilt on a refreshed `alpine-base` 3.24** (#417), and the `nginx` base that every
+  static site Pando builds is served from is refreshed (#419), picking up their upstream package updates.
+- **The Kubernetes manifests run BuildKit v0.35.1** (#418), up from v0.35.0, and Pando's own BuildKit
+  client moves to the same version (#422).
+- **Go dependencies are updated** (#422), among them the AWS SDK (ECR and S3 registries and backups),
+  the Docker/Moby client, `golang.org/x/net` and the OpenAI client.
+
 ## [0.20.2] - 2026-11-17
 
 This release fixes vulnerabilities in SAML sign-in. If you have a SAML identity provider configured,
